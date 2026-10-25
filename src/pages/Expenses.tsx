@@ -19,7 +19,7 @@ export default function Expenses() {
     return [...g];
   }, [expenses, categories, q, from, to]);
   return (
-    <div className="space-y-4">
+    <div className="min-w-0 space-y-4">
       <div className="grid gap-2 sm:grid-cols-3">
         <input className="input" placeholder="Search note, category or date" value={q} onChange={(e) => setQ(e.target.value)} />
         <input className="input" type="date" value={from} onChange={(e) => setFrom(e.target.value)} aria-label="From date" />
@@ -27,18 +27,18 @@ export default function Expenses() {
       </div>
       {groups.length === 0 && <p className="text-mute">No expenses match. Add one with “Add expense”.</p>}
       {groups.map(([day, items]) => (
-        <section key={day}>
+        <section key={day} className="min-w-0">
           <h3 className="flex justify-between text-sm text-mute mb-2"><span>{day}</span><span>{money(items.reduce((s, e) => s + e.amount, 0))}</span></h3>
           <div className="space-y-2">{items.map((e) => { const c = cat(e.categoryId); return (
-            <div key={e.$id} className="flex items-center gap-3 bg-panel border border-line rounded-lg p-3">
-              <span className="inline-flex items-center gap-2 text-xs px-2 py-1 rounded-full bg-ink text-text font-medium">
+            <div key={e.$id} className="flex min-w-0 flex-wrap sm:flex-nowrap items-center gap-x-3 gap-y-2 bg-panel border border-line rounded-lg p-3">
+              <span className="inline-flex max-w-[55%] sm:max-w-none min-w-0 items-center gap-2 text-xs px-2 py-1 rounded-full bg-ink text-text font-medium">
                 <span className="size-2 rounded-full shrink-0" style={{ background: c?.color ?? "#64748b" }} />
-                {c?.name ?? "Unknown"}
+                <span className="truncate">{c?.name ?? "Unknown"}</span>
               </span>
-              <span className="text-xs text-mute">{timeTag(e.timestamp)}</span>
-              <span className="flex-1 truncate text-sm">{e.note}</span>
-              <span className="font-semibold">{money(e.amount)}</span>
-              <button className="text-mute hover:text-red-400" aria-label="Delete expense" onClick={() => del.mutate(e.$id)}>🗑</button>
+              <span className="text-xs text-mute whitespace-nowrap">{timeTag(e.timestamp)}</span>
+              <span className="basis-full sm:basis-auto sm:flex-1 min-w-0 truncate text-sm sm:order-none order-last">{e.note}</span>
+              <span className="ml-auto font-semibold whitespace-nowrap">{money(e.amount)}</span>
+              <button className="min-h-11 min-w-11 shrink-0 grid place-items-center text-mute hover:text-red-400" aria-label="Delete expense" onClick={() => del.mutate(e.$id)}>🗑</button>
             </div>); })}</div>
         </section>))}
     </div>
