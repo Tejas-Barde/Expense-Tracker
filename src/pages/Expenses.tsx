@@ -31,7 +31,10 @@ export default function Expenses() {
           <h3 className="flex justify-between text-sm text-mute mb-2"><span>{day}</span><span>{money(items.reduce((s, e) => s + e.amount, 0))}</span></h3>
           <div className="space-y-2">{items.map((e) => { const c = cat(e.categoryId); return (
             <div key={e.$id} className="flex items-center gap-3 bg-panel border border-line rounded-lg p-3">
-              <span className="text-xs px-2 py-1 rounded-full text-black font-medium" style={{ background: c?.color ?? "#888" }}>{c?.name ?? "Unknown"}</span>
+              <span className="inline-flex items-center gap-2 text-xs px-2 py-1 rounded-full bg-ink text-text font-medium">
+                <span className="size-2 rounded-full shrink-0" style={{ background: c?.color ?? "#64748b" }} />
+                {c?.name ?? "Unknown"}
+              </span>
               <span className="text-xs text-mute">{timeTag(e.timestamp)}</span>
               <span className="flex-1 truncate text-sm">{e.note}</span>
               <span className="font-semibold">{money(e.amount)}</span>

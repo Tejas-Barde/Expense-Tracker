@@ -5,7 +5,7 @@ import { useData } from "../../lib/hooks";
 import { money, monthKey, dailyLimit, pace, barColor } from "../../lib/utils";
 const Card = ({ title, children }: { title: string; children: React.ReactNode }) => (
   <section className="bg-panel border border-line rounded-xl p-4"><h3 className="text-sm text-mute mb-2">{title}</h3>{children}</section>);
-const tip = { contentStyle: { background: "#161d1a", border: "1px solid #26302c", borderRadius: 8 } };
+const tip = { contentStyle: { background: "#151c2c", color: "#edf2ff", border: "1px solid #29334a", borderRadius: 8 } };
 
 export default function Dashboard() {
   const { categories, expenses, budget, loading } = useData();
@@ -41,7 +41,7 @@ export default function Dashboard() {
           <div className="h-2 mt-2 bg-ink rounded"><div className={`h-2 rounded ${barColor(pct)}`} style={{ width: `${Math.min(pct, 100)}%` }} /></div></Card>
         <Card title="Today"><p className="text-2xl font-bold">{money(d.today)}</p>
           <p className={`text-sm ${total && d.today > daily ? "text-red-400" : "text-mute"}`}>limit {total ? money(daily) : "—"}</p></Card>
-        <Card title="Top category"><p className="text-2xl font-bold" style={{ color: d.top?.color }}>{d.top?.spent ? d.top.name : "—"}</p>
+        <Card title="Top category"><p className="text-2xl font-bold text-text">{d.top?.spent ? d.top.name : "—"}</p>
           <p className="text-sm text-mute">{d.top?.spent ? money(d.top.spent) : "No spending yet"}</p></Card>
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
@@ -52,14 +52,14 @@ export default function Dashboard() {
             <Tooltip {...tip} formatter={(v: number) => [`${money(v)} (${((v / (d.spent || 1)) * 100).toFixed(0)}%)`]} /><Legend /></PieChart></ResponsiveContainer></Card>
         <Card title="Budget vs actual">
           <ResponsiveContainer width="100%" height={260}><BarChart data={d.rows}>
-            <XAxis dataKey="name" tick={{ fill: "#8a9a93", fontSize: 11 }} /><YAxis tick={{ fill: "#8a9a93", fontSize: 11 }} />
+            <XAxis dataKey="name" tick={{ fill: "#9aa8c2", fontSize: 11 }} /><YAxis tick={{ fill: "#9aa8c2", fontSize: 11 }} />
             <Tooltip {...tip} formatter={(v: number) => money(v)} /><Legend />
-            <Bar dataKey="budget" fill="#3b4a44" name="Budget" radius={[4, 4, 0, 0]} /><Bar dataKey="spent" fill="#e6b450" name="Spent" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer></Card>
+            <Bar dataKey="budget" fill="#52617d" name="Budget" radius={[4, 4, 0, 0]} /><Bar dataKey="spent" fill="#7187ff" name="Spent" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer></Card>
         <div className="lg:col-span-2"><Card title="Cumulative daily spending">
           <ResponsiveContainer width="100%" height={240}><LineChart data={d.trend}>
-            <CartesianGrid stroke="#26302c" /><XAxis dataKey="day" tick={{ fill: "#8a9a93", fontSize: 11 }} /><YAxis tick={{ fill: "#8a9a93", fontSize: 11 }} />
+            <CartesianGrid stroke="#29334a" /><XAxis dataKey="day" tick={{ fill: "#9aa8c2", fontSize: 11 }} /><YAxis tick={{ fill: "#9aa8c2", fontSize: 11 }} />
             <Tooltip {...tip} formatter={(v: number) => money(v)} labelFormatter={(l) => `Day ${l}`} />
-            <Line dataKey="total" stroke="#e6b450" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></Card></div>
+            <Line dataKey="total" stroke="#4d65ff" strokeWidth={2} dot={false} /></LineChart></ResponsiveContainer></Card></div>
       </div>
       <Card title="Budget usage by category"><div className="space-y-3">
         {d.rows.filter((r) => r.budget > 0).map((r) => { const x = (r.spent / r.budget) * 100; return (

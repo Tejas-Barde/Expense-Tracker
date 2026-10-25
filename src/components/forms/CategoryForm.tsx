@@ -2,11 +2,11 @@ import { useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import Modal from "../Modal";
-import { useAuth } from "../../lib/auth";
-import { addCategory } from "../../lib/services/categories";
+import { useData } from "../../lib/hooks";
+import { addCategory, nextCategoryColor } from "../../lib/services/categories";
 export default function CategoryForm({ onClose }: { onClose: () => void }) {
-  const uid = useAuth().user!.$id; const qc = useQueryClient();
-  const [name, setName] = useState(""); const [color, setColor] = useState("#6ee7b7");
+  const { uid, categories } = useData(); const qc = useQueryClient();
+  const [name, setName] = useState(""); const [color, setColor] = useState(() => nextCategoryColor(categories));
   const m = useMutation({
     mutationFn: () => addCategory(uid, name.trim(), color),
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["categories"] }); toast.success("Category added"); onClose(); },

@@ -16,7 +16,7 @@ export function pace(total: number, spent: number, now = new Date()) {
   if (!total) return { label: "No budget", cls: "text-mute" };
   const days = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   if (spent > total) return { label: "Over Budget", cls: "text-red-400" };
-  if (spent / total >= 0.9 || spent / total > now.getDate() / days + 0.1) return { label: "Near Limit", cls: "text-orange-400" };
+  if (spent / total >= 0.9 || spent / total > now.getDate() / days + 0.1) return { label: "Near Limit", cls: "text-orange-300" };
   return { label: "On Track", cls: "text-emerald-400" };
 }
 export const barColor = (p: number) => (p > 90 ? "bg-red-500" : p >= 75 ? "bg-orange-400" : "bg-emerald-500");
