@@ -4,10 +4,12 @@ import { toast } from "sonner";
 import Modal from "../components/Modal";
 import { useData } from "../lib/hooks";
 import { deleteExpense } from "../lib/services/expenses";
+import { removeExpenseFinanceData } from "../lib/services/finance";
 import { dayLabel, timeTag, money } from "../lib/utils";
+import Dashboard from "../components/dashboard/Dashboard";
 
 export default function Expenses() {
-  const { uid, categories, expenses } = useData();
+  const { uid, categories, expenses, finance } = useData();
   const qc = useQueryClient();
   const [q, setQ] = useState("");
   const [from, setFrom] = useState("");
@@ -15,7 +17,19 @@ export default function Expenses() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [confirmIds, setConfirmIds] = useState<string[] | null>(null);
+  const [showPreviousMonth, setShowPreviousMonth] = useState(true);
+  const previousMonth = useMemo(() => {
+    const now = new Date();
+    return new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  }, []);
+  const previousMonthLabel = previousMonth.toLocaleDateString("en-US", { month: "long", year: "numeric" });
   const cat = (id: string) => categories.find((category) => category.$id === id);
+  const personalAmount = (expense: typeof expenses[number]) => {
+    const sharedLoan = finance.loans.find((loan) => loan.expenseId === expense.$id);
+    if (sharedLoan) return Math.max(expense.amount - sharedLoan.amount, 0);
+    const friendPaid = finance.friendPaidExpenses?.find((item) => item.expenseId === expense.$id);
+    return friendPaid ? 0 : expense.amount;
+  };
 
   const visibleExpenses = useMemo(() => {
     const search = q.trim().toLowerCase();
@@ -40,13 +54,16 @@ export default function Expenses() {
   const deleteMutation = useMutation({
     mutationFn: async (ids: string[]) => {
       const results = await Promise.allSettled(ids.map((id) => deleteExpense(id)));
+      const deleted = ids.filter((_, index) => results[index].status === "fulfilled");
+      if (deleted.length) await removeExpenseFinanceData(deleted);
       return {
-        deleted: ids.filter((_, index) => results[index].status === "fulfilled"),
+        deleted,
         failed: ids.filter((_, index) => results[index].status === "rejected"),
       };
     },
     onSuccess: ({ deleted, failed }) => {
       qc.invalidateQueries({ queryKey: ["expenses"] });
+      qc.invalidateQueries({ queryKey: ["finance", uid] });
       setSelectedIds(new Set(failed));
       if (failed.length) {
         setConfirmIds(failed);
@@ -63,14 +80,14 @@ export default function Expenses() {
   });
 
   const selectedExpenses = expenses.filter((expense) => selectedIds.has(expense.$id));
-  const selectedTotal = selectedExpenses.reduce((sum, expense) => sum + expense.amount, 0);
+  const selectedTotal = selectedExpenses.reduce((sum, expense) => sum + personalAmount(expense), 0);
   const visibleSelectedCount = visibleExpenses.filter((expense) => selectedIds.has(expense.$id)).length;
   const allVisibleSelected = visibleExpenses.length > 0 && visibleSelectedCount === visibleExpenses.length;
   const confirmExpenses = confirmIds?.flatMap((id) => {
     const expense = expenses.find((item) => item.$id === id);
     return expense ? [expense] : [];
   }) ?? [];
-  const confirmTotal = confirmExpenses.reduce((sum, expense) => sum + expense.amount, 0);
+  const confirmTotal = confirmExpenses.reduce((sum, expense) => sum + personalAmount(expense), 0);
 
   function clearSelection() {
     setSelectedIds(new Set());
@@ -111,6 +128,21 @@ export default function Expenses() {
           {selectionMode ? "Done" : "Select"}
         </button>
       </header>
+      <section className="overflow-hidden rounded-xl border border-line bg-panel">
+        <button type="button" className="flex min-h-14 w-full items-center justify-between gap-3 px-4 text-left"
+          aria-expanded={showPreviousMonth} onClick={() => setShowPreviousMonth((visible) => !visible)}>
+          <div>
+            <h2 className="font-semibold">{previousMonthLabel} dashboard</h2>
+            <p className="text-xs text-mute">Review the previous month's spending</p>
+          </div>
+          <span className="text-mute">{showPreviousMonth ? "Hide" : "Show"}</span>
+        </button>
+        {showPreviousMonth && (
+          <div className="border-t border-line p-3 sm:p-4">
+            <Dashboard month={previousMonth} />
+          </div>
+        )}
+      </section>
       <div className="grid gap-2 sm:grid-cols-3">
         <input className="input" placeholder="Search note, category or date" value={q}
           onChange={(event) => { setQ(event.target.value); clearSelection(); }} />
@@ -137,9 +169,11 @@ export default function Expenses() {
       )}
       {groups.map(([day, items]) => (
         <section key={day} className="min-w-0">
-          <h3 className="mb-2 flex justify-between text-sm text-mute"><span>{day}</span><span>{money(items.reduce((sum, expense) => sum + expense.amount, 0))}</span></h3>
+          <h3 className="mb-2 flex justify-between text-sm text-mute"><span>{day}</span><span>{money(items.reduce((sum, expense) => sum + personalAmount(expense), 0))}</span></h3>
           <div className="space-y-2">{items.map((expense) => {
             const category = cat(expense.categoryId);
+            const friendPaid = finance.friendPaidExpenses?.find((item) => item.expenseId === expense.$id);
+            const friendOwes = finance.loans.find((loan) => loan.expenseId === expense.$id);
             return (
               <article key={expense.$id} className={`flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border bg-panel p-3 sm:flex-nowrap ${selectedIds.has(expense.$id) ? "border-accent" : "border-line"}`}>
                 {selectionMode && <label className="grid min-h-11 min-w-11 shrink-0 cursor-pointer place-items-center" aria-label={`Select transaction ${expense.note || category?.name || "without a note"}`}>
@@ -152,7 +186,18 @@ export default function Expenses() {
                 </span>
                 <span className="whitespace-nowrap text-xs text-mute">{timeTag(expense.timestamp)}</span>
                 <span className="order-last basis-full truncate text-sm sm:order-none sm:basis-auto sm:flex-1">{expense.note || <span className="text-mute">No note</span>}</span>
-                <span className="ml-auto whitespace-nowrap font-semibold">{money(expense.amount)}</span>
+                {friendPaid && <span className="shrink-0 rounded-full bg-red-400/10 px-2 py-1 text-xs text-red-300">
+                  You owe {friendPaid.friend || "friend"} {money(Math.max(friendPaid.amount - (friendPaid.repaid ?? 0), 0))}
+                </span>}
+                {friendOwes && <span className="shrink-0 rounded-full bg-emerald-400/10 px-2 py-1 text-xs text-emerald-300">{friendOwes.friend || "Friend"} owes {money(Math.max(friendOwes.amount - friendOwes.repaid, 0))}</span>}
+                {friendOwes && <span className="shrink-0 text-xs text-mute">{money(expense.amount)} total paid</span>}
+                <span className="ml-auto whitespace-nowrap font-semibold">
+                  {friendPaid
+                    ? money(0)
+                    : friendOwes
+                      ? money(Math.max(expense.amount - friendOwes.amount, 0))
+                      : money(expense.amount)}
+                </span>
                 {!selectionMode && <button type="button" className="grid min-h-11 min-w-11 shrink-0 place-items-center rounded-lg text-mute hover:bg-red-500/10 hover:text-red-400"
                   aria-label={`Delete transaction ${expense.note || category?.name || "without a note"}`}
                   onClick={() => setConfirmIds([expense.$id])}>🗑</button>}

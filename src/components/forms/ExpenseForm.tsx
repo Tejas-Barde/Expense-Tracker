@@ -4,16 +4,49 @@ import { toast } from "sonner";
 import Modal from "../Modal";
 import { useData } from "../../lib/hooks";
 import { addExpense } from "../../lib/services/expenses";
+import { addFriendPaidExpense, addLoan } from "../../lib/services/finance";
 export default function ExpenseForm({ onClose }: { onClose: () => void }) {
   const { uid, categories } = useData(); const qc = useQueryClient();
   const [amount, setAmount] = useState(""); const [categoryId, setCat] = useState(""); const [note, setNote] = useState(""); const [dt, setDt] = useState(""); const [pickerOpen, setPickerOpen] = useState(false);
+  const [paymentMode, setPaymentMode] = useState<"self" | "friend_paid" | "paid_for_friend">("self");
+  const [friendName, setFriendName] = useState("");
+  const [friendShare, setFriendShare] = useState("");
   const m = useMutation({
-    mutationFn: () => addExpense(uid, { amount: parseFloat(amount), categoryId, note,
-      timestamp: dt ? new Date(dt).toISOString() : new Date().toISOString() }), // auto-timestamp unless overridden
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["expenses"] }); toast.success("Expense added"); onClose(); },
+    mutationFn: async () => {
+      const timestamp = dt ? new Date(dt).toISOString() : new Date().toISOString();
+      const expenseAmount = parseFloat(amount);
+      const created = await addExpense(uid, { amount: expenseAmount, categoryId, note, timestamp });
+      if (paymentMode === "friend_paid") {
+        await addFriendPaidExpense({
+          expenseId: created.$id,
+          friend: friendName.trim(),
+          amount: expenseAmount,
+          timestamp,
+        });
+      }
+      if (paymentMode === "paid_for_friend") {
+        await addLoan({
+          friend: friendName.trim(),
+          amount: parseFloat(friendShare),
+          note: note.trim() || "Paid through an expense",
+          timestamp,
+          expenseId: created.$id,
+        });
+      }
+    },
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["expenses"] });
+      qc.invalidateQueries({ queryKey: ["finance"] });
+      toast.success("Expense added");
+      onClose();
+    },
     onError: (e: any) => toast.error(e.message),
   });
-  const ok = parseFloat(amount) > 0 && categoryId;
+  const expenseAmount = parseFloat(amount);
+  const shareAmount = parseFloat(friendShare);
+  const ok = expenseAmount > 0 && !!categoryId
+    && (paymentMode === "self"
+      || (friendName.trim().length > 0 && (paymentMode !== "paid_for_friend" || (shareAmount > 0 && shareAmount <= expenseAmount))));
   return (
     <Modal title="Add expense" onClose={onClose}>
       <div className="space-y-3">
@@ -31,6 +64,34 @@ export default function ExpenseForm({ onClose }: { onClose: () => void }) {
         <input className="input" placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} />
         <label className="block text-sm text-mute">Date & time (leave empty to use right now)
           <input className="input mt-1" type="datetime-local" value={dt} onChange={(e) => setDt(e.target.value)} /></label>
+        <fieldset className="space-y-2">
+          <legend className="mb-1 text-sm text-mute">Who paid?</legend>
+          <div className="grid gap-2 sm:grid-cols-3">
+            {([
+              ["self", "I paid"],
+              ["friend_paid", "Friend paid"],
+              ["paid_for_friend", "I paid for friend"],
+            ] as const).map(([value, label]) => (
+              <button key={value} type="button" className={`min-h-11 rounded-lg border px-3 text-sm ${paymentMode === value ? "border-accent bg-accent/10 text-accent" : "border-line bg-ink text-mute"}`}
+                aria-pressed={paymentMode === value} onClick={() => setPaymentMode(value)}>
+                {label}
+              </button>
+            ))}
+          </div>
+        </fieldset>
+        {paymentMode !== "self" && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block text-sm text-mute">Friend's name
+              <input className="input mt-1" value={friendName} onChange={(e) => setFriendName(e.target.value)} placeholder="Friend name" /></label>
+            {paymentMode === "paid_for_friend" && (
+              <label className="block text-sm text-mute">Friend owes
+                <input className="input mt-1" type="number" min="0.01" max={expenseAmount || undefined} step="0.01" inputMode="decimal"
+                  value={friendShare} onChange={(e) => setFriendShare(e.target.value)} placeholder="Amount owed" /></label>
+            )}
+          </div>
+        )}
+        {paymentMode === "friend_paid" && <p className="text-sm text-amber-300">This expense is excluded from your spending and adds the amount to what you owe this friend.</p>}
+        {paymentMode === "paid_for_friend" && <p className="text-sm text-emerald-300">Only your share is counted as personal spending; the friend owes the remaining amount in Owing.</p>}
         <button className="btn w-full disabled:opacity-40" disabled={!ok || m.isPending} onClick={() => m.mutate()}>Add expense</button>
       </div>
       {pickerOpen && <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 sm:items-center" role="presentation" onClick={() => setPickerOpen(false)}>

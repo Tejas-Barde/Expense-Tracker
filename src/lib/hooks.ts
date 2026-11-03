@@ -5,12 +5,12 @@ import { listExpenses } from "./services/expenses";
 import { getBudget } from "./services/budgets";
 import { getFinance } from "./services/finance";
 import { monthKey } from "./utils";
-export function useData() {
-  const uid = useAuth().user!.$id, mk = monthKey();
+export function useData(month?: Date) {
+  const uid = useAuth().user!.$id, mk = monthKey(month);
   const c = useQuery({ queryKey: ["categories"], queryFn: () => listCategories(uid) });
   const e = useQuery({ queryKey: ["expenses"], queryFn: () => listExpenses(uid) });
   const b = useQuery({ queryKey: ["budget", mk], queryFn: () => getBudget(uid, mk) });
   const f = useQuery({ queryKey: ["finance", uid], queryFn: getFinance });
   return { uid, mk, categories: c.data ?? [], expenses: e.data ?? [], budget: b.data ?? null,
-    finance: f.data ?? { salary: 0, loans: [] }, loading: c.isLoading || e.isLoading || b.isLoading || f.isLoading };
+    finance: f.data ?? { salary: 0, loans: [], friendPaidExpenses: [] }, loading: c.isLoading || e.isLoading || b.isLoading || f.isLoading };
 }

@@ -9,19 +9,22 @@ export default function BudgetForm({ onClose }: { onClose: () => void }) {
   const { uid, mk, categories, budget, finance, loading } = useData(); const qc = useQueryClient();
   const [total, setTotal] = useState(String(budget?.total ?? ""));
   const [salary, setSalary] = useState(String(finance.salary || ""));
+  const [savings, setSavings] = useState(String(budget?.savings ?? ""));
   const [limits, setLimits] = useState<Record<string, string>>(
     Object.fromEntries(Object.entries(budget?.limits ?? {}).map(([k, v]) => [k, String(v)])));
   useEffect(() => {
     if (!loading) {
       setTotal(String(budget?.total ?? ""));
       setSalary(String(finance.salary || ""));
+      setSavings(String(budget?.savings ?? ""));
       setLimits(Object.fromEntries(Object.entries(budget?.limits ?? {}).map(([k, v]) => [k, String(v)])));
     }
   }, [loading, budget, finance.salary]);
   const m = useMutation({
     mutationFn: async () => {
       await saveBudget(uid, mk, parseFloat(total) || 0,
-        Object.fromEntries(Object.entries(limits).filter(([, v]) => parseFloat(v) > 0).map(([k, v]) => [k, parseFloat(v)])), budget?.id ?? null);
+        Object.fromEntries(Object.entries(limits).filter(([, v]) => parseFloat(v) > 0).map(([k, v]) => [k, parseFloat(v)])), budget?.id ?? null,
+        parseFloat(savings) || 0);
       await saveSalary(parseFloat(salary) || 0);
     },
     onSuccess: () => { qc.invalidateQueries({ queryKey: ["budget"] }); qc.invalidateQueries({ queryKey: ["finance", uid] }); toast.success("Budget and salary saved"); onClose(); },
@@ -35,6 +38,9 @@ export default function BudgetForm({ onClose }: { onClose: () => void }) {
           <input className="input mt-1" type="number" min="0" step="0.01" value={salary} onChange={(e) => setSalary(e.target.value)} placeholder="Enter your monthly salary" /></label>
         <label className="block text-sm text-mute">Overall monthly limit
           <input className="input mt-1" type="number" min="0" value={total} onChange={(e) => setTotal(e.target.value)} /></label>
+        <label className="block text-sm text-mute">Planned savings
+          <input className="input mt-1" type="number" min="0" step="0.01" value={savings}
+            onChange={(e) => setSavings(e.target.value)} placeholder="Enter money to save this month" /></label>
         <p className="text-sm text-mute">Category limits</p>
         {categories.map((c) => (
           <div key={c.$id} className="flex items-center gap-3">
