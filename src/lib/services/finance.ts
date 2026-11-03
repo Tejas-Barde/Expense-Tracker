@@ -31,7 +31,7 @@ export async function saveSalary(salary: number) {
 
 export async function addLoan(loan: Omit<Loan, "id" | "repaid">) {
   const finance = await getFinance();
-  const newLoan: Loan = { ...loan, id: ID.unique(), repaid: 0 };
+  const newLoan: Loan = { ...loan, friend: normalizeFriendName(loan.friend), id: ID.unique(), repaid: 0 };
   await saveFinance({ ...finance, loans: [newLoan, ...finance.loans] });
 }
 
@@ -56,7 +56,7 @@ export async function addFriendPaidExpense(expense: FriendPaidExpense) {
   const finance = await getFinance();
   await saveFinance({
     ...finance,
-    friendPaidExpenses: [...(finance.friendPaidExpenses ?? []), { ...expense, repaid: 0, repayments: [] }],
+    friendPaidExpenses: [...(finance.friendPaidExpenses ?? []), { ...expense, friend: normalizeFriendName(expense.friend), repaid: 0, repayments: [] }],
   });
 }
 
@@ -88,4 +88,13 @@ export async function removeExpenseFinanceData(expenseIds: string[]) {
     friendPaidExpenses: (finance.friendPaidExpenses ?? []).filter((item) => !removed.has(item.expenseId)),
     loans: finance.loans.filter((loan) => !loan.expenseId || !removed.has(loan.expenseId)),
   });
+}
+
+export function normalizeFriendName(name: string) {
+  return name.trim().replace(/\s+/g, " ")
+    .replace(/\b\w/g, (letter) => letter.toUpperCase());
+}
+
+export function friendNameKey(name: string) {
+  return normalizeFriendName(name).toLocaleLowerCase();
 }

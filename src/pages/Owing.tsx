@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useData } from "../lib/hooks";
 import { money } from "../lib/utils";
-import { updateFriendPaidRepaid, updateLoanRepaid } from "../lib/services/finance";
+import { friendNameKey, normalizeFriendName, updateFriendPaidRepaid, updateLoanRepaid } from "../lib/services/finance";
 import LendingForm from "../components/forms/LendingForm";
 
 export default function Owing() {
@@ -34,6 +34,23 @@ export default function Owing() {
   const outstanding = totalLent - totalRepaid;
   const debtsToFriends = finance.friendPaidExpenses ?? [];
   const totalOwedToFriends = debtsToFriends.reduce((sum, debt) => sum + Math.max(debt.amount - (debt.repaid ?? 0), 0), 0);
+  const balances = new Map<string, { name: string; theyOweYou: number; youOweThem: number }>();
+  finance.loans.forEach((loan) => {
+    const name = normalizeFriendName(loan.friend);
+    if (!name) return;
+    const key = friendNameKey(name);
+    const current = balances.get(key) ?? { name, theyOweYou: 0, youOweThem: 0 };
+    current.theyOweYou += Math.max(loan.amount - loan.repaid, 0);
+    balances.set(key, current);
+  });
+  debtsToFriends.forEach((debt) => {
+    const name = normalizeFriendName(debt.friend);
+    if (!name) return;
+    const key = friendNameKey(name);
+    const current = balances.get(key) ?? { name, theyOweYou: 0, youOweThem: 0 };
+    current.youOweThem += Math.max(debt.amount - (debt.repaid ?? 0), 0);
+    balances.set(key, current);
+  });
 
   if (loading) return <p className="text-mute">Loading…</p>;
   return (
@@ -48,6 +65,25 @@ export default function Owing() {
         <Summary title="Still owed" amount={outstanding} prominent />
         <Summary title="You owe friends" amount={totalOwedToFriends} />
       </div>
+      {balances.size > 0 && (
+        <section className="rounded-xl border border-line bg-panel p-4">
+          <h3 className="font-semibold">Overall balances</h3>
+          <p className="mb-3 text-xs text-mute">Balances are combined by friend name.</p>
+          <div className="space-y-2">
+            {[...balances.values()].map((balance) => {
+              const net = balance.theyOweYou - balance.youOweThem;
+              return (
+                <div key={friendNameKey(balance.name)} className="flex items-center justify-between gap-3 rounded-lg bg-ink px-3 py-2">
+                  <span className="truncate font-medium">{balance.name}</span>
+                  <span className={`shrink-0 text-sm font-semibold ${net > 0 ? "text-emerald-400" : net < 0 ? "text-red-300" : "text-mute"}`}>
+                    {net > 0 ? `${money(net)} is owed to you` : net < 0 ? `You owe ${money(Math.abs(net))}` : "Settled up"}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </section>
+      )}
       {debtsToFriends.length > 0 && (
         <section className="space-y-3">
           <div>

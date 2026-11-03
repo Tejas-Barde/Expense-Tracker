@@ -15,7 +15,10 @@ export default function CategoryForm({ onClose }: { onClose: () => void }) {
   return (
     <Modal title="New category" onClose={onClose}>
       <div className="space-y-3">
-        <input className="input" placeholder="Category name" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
+        <datalist id="category-name-suggestions">
+          {categories.map((category) => <option key={category.$id} value={category.name} />)}
+        </datalist>
+        <input className="input" list="category-name-suggestions" placeholder="Category name" value={name} onChange={(e) => setName(e.target.value)} autoFocus />
         <label className="flex items-center gap-3 text-sm text-mute">Color
           <input type="color" value={color} onChange={(e) => setColor(e.target.value)} className="h-10 w-16 bg-transparent" /></label>
         <button className="btn w-full disabled:opacity-40" disabled={!name.trim() || m.isPending} onClick={() => m.mutate()}>Add category</button>

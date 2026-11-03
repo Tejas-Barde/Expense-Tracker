@@ -4,9 +4,10 @@ import { toast } from "sonner";
 import Modal from "../Modal";
 import { useData } from "../../lib/hooks";
 import { addLoan } from "../../lib/services/finance";
+import { normalizeFriendName } from "../../lib/services/finance";
 
 export default function LendingForm({ onClose }: { onClose: () => void }) {
-  const { uid } = useData();
+  const { uid, finance } = useData();
   const qc = useQueryClient();
   const [friend, setFriend] = useState("");
   const [amount, setAmount] = useState("");
@@ -14,7 +15,7 @@ export default function LendingForm({ onClose }: { onClose: () => void }) {
   const [date, setDate] = useState("");
   const mutation = useMutation({
     mutationFn: () => addLoan({
-      friend: friend.trim(),
+      friend: normalizeFriendName(friend),
       amount: Number(amount),
       note: note.trim(),
       timestamp: date ? new Date(date).toISOString() : new Date().toISOString(),
@@ -27,12 +28,19 @@ export default function LendingForm({ onClose }: { onClose: () => void }) {
     onError: (error: Error) => toast.error(error.message),
   });
   const valid = friend.trim().length > 0 && Number(amount) > 0;
+  const friendSuggestions = [...new Set([
+    ...finance.loans.map((loan) => normalizeFriendName(loan.friend)),
+    ...(finance.friendPaidExpenses ?? []).map((debt) => normalizeFriendName(debt.friend)),
+  ].filter(Boolean))].sort((a, b) => a.localeCompare(b));
 
   return (
     <Modal title="Lend money" onClose={onClose}>
       <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); if (valid) mutation.mutate(); }}>
+        <datalist id="lending-friend-suggestions">
+          {friendSuggestions.map((suggestion) => <option key={suggestion} value={suggestion} />)}
+        </datalist>
         <label className="block text-sm text-mute">Friend's name
-          <input className="input mt-1" value={friend} onChange={(event) => setFriend(event.target.value)} autoFocus autoComplete="name" placeholder="Who are you lending to?" required /></label>
+          <input className="input mt-1" list="lending-friend-suggestions" value={friend} onChange={(event) => setFriend(event.target.value)} autoFocus autoComplete="off" placeholder="Who are you lending to?" required /></label>
         <label className="block text-sm text-mute">Amount lent
           <input className="input mt-1" type="number" min="0.01" step="0.01" inputMode="decimal" value={amount} onChange={(event) => setAmount(event.target.value)} placeholder="0.00" required /></label>
         <label className="block text-sm text-mute">Note (optional)

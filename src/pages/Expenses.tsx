@@ -25,8 +25,11 @@ export default function Expenses() {
   const previousMonthLabel = previousMonth.toLocaleDateString("en-US", { month: "long", year: "numeric" });
   const cat = (id: string) => categories.find((category) => category.$id === id);
   const personalAmount = (expense: typeof expenses[number]) => {
-    const sharedLoan = finance.loans.find((loan) => loan.expenseId === expense.$id);
-    if (sharedLoan) return Math.max(expense.amount - sharedLoan.amount, 0);
+    const sharedLoans = finance.loans.filter((loan) => loan.expenseId === expense.$id);
+    if (sharedLoans.length) {
+      const friendShare = sharedLoans.reduce((sum, loan) => sum + loan.amount, 0);
+      return Math.max(expense.amount - friendShare, 0);
+    }
     const friendPaid = finance.friendPaidExpenses?.find((item) => item.expenseId === expense.$id);
     return friendPaid ? 0 : expense.amount;
   };
@@ -144,7 +147,13 @@ export default function Expenses() {
         )}
       </section>
       <div className="grid gap-2 sm:grid-cols-3">
-        <input className="input" placeholder="Search note, category or date" value={q}
+        <datalist id="history-search-suggestions">
+          {[...new Set([
+            ...expenses.map((expense) => expense.note.trim()).filter(Boolean),
+            ...categories.map((category) => category.name),
+          ])].map((suggestion) => <option key={suggestion} value={suggestion} />)}
+        </datalist>
+        <input className="input" list="history-search-suggestions" placeholder="Search note, category or date" value={q}
           onChange={(event) => { setQ(event.target.value); clearSelection(); }} />
         <input className="input" type="date" value={from} aria-label="From date"
           onChange={(event) => { setFrom(event.target.value); clearSelection(); }} />
@@ -174,6 +183,8 @@ export default function Expenses() {
             const category = cat(expense.categoryId);
             const friendPaid = finance.friendPaidExpenses?.find((item) => item.expenseId === expense.$id);
             const friendOwes = finance.loans.find((loan) => loan.expenseId === expense.$id);
+            const sharedLoans = finance.loans.filter((loan) => loan.expenseId === expense.$id);
+            const friendsOwedAmount = sharedLoans.reduce((sum, loan) => sum + Math.max(loan.amount - loan.repaid, 0), 0);
             return (
               <article key={expense.$id} className={`flex min-w-0 flex-wrap items-center gap-x-3 gap-y-2 rounded-xl border bg-panel p-3 sm:flex-nowrap ${selectedIds.has(expense.$id) ? "border-accent" : "border-line"}`}>
                 {selectionMode && <label className="grid min-h-11 min-w-11 shrink-0 cursor-pointer place-items-center" aria-label={`Select transaction ${expense.note || category?.name || "without a note"}`}>
@@ -189,13 +200,15 @@ export default function Expenses() {
                 {friendPaid && <span className="shrink-0 rounded-full bg-red-400/10 px-2 py-1 text-xs text-red-300">
                   You owe {friendPaid.friend || "friend"} {money(Math.max(friendPaid.amount - (friendPaid.repaid ?? 0), 0))}
                 </span>}
-                {friendOwes && <span className="shrink-0 rounded-full bg-emerald-400/10 px-2 py-1 text-xs text-emerald-300">{friendOwes.friend || "Friend"} owes {money(Math.max(friendOwes.amount - friendOwes.repaid, 0))}</span>}
+                {sharedLoans.length > 0 && <span className="shrink-0 rounded-full bg-emerald-400/10 px-2 py-1 text-xs text-emerald-300">
+                  Friends owe {money(friendsOwedAmount)}
+                </span>}
                 {friendOwes && <span className="shrink-0 text-xs text-mute">{money(expense.amount)} total paid</span>}
                 <span className="ml-auto whitespace-nowrap font-semibold">
                   {friendPaid
                     ? money(0)
-                    : friendOwes
-                      ? money(Math.max(expense.amount - friendOwes.amount, 0))
+                    : sharedLoans.length
+                      ? money(Math.max(expense.amount - sharedLoans.reduce((sum, loan) => sum + loan.amount, 0), 0))
                       : money(expense.amount)}
                 </span>
                 {!selectionMode && <button type="button" className="grid min-h-11 min-w-11 shrink-0 place-items-center rounded-lg text-mute hover:bg-red-500/10 hover:text-red-400"

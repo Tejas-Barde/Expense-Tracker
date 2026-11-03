@@ -21,8 +21,9 @@ export default function Dashboard({ month }: { month?: Date }) {
       (e.timestamp.startsWith(mk) || monthKey(new Date(e.timestamp)) === mk)
       && !friendPaidIds.has(e.$id));
     const personalShareFor = (expenseId: string, fallback: number) => {
-      const linkedLoan = finance.loans.find((loan) => loan.expenseId === expenseId);
-      return linkedLoan ? Math.max(0, fallback - linkedLoan.amount) : fallback;
+      const linkedLoans = finance.loans.filter((loan) => loan.expenseId === expenseId);
+      const friendShare = linkedLoans.reduce((sum, loan) => sum + loan.amount, 0);
+      return linkedLoans.length ? Math.max(0, fallback - friendShare) : fallback;
     };
     const expenseSpent = month.reduce((sum, expense) => sum + personalShareFor(expense.$id, expense.amount), 0);
     const lentThisMonth = finance.loans.filter((loan) => !loan.expenseId && monthKey(new Date(loan.timestamp)) === mk).reduce((sum, loan) => sum + loan.amount, 0);
