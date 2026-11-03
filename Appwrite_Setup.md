@@ -1,6 +1,6 @@
 # Appwrite setup (1 database, 1 table)
 
-Only `expenses` is a table. Categories and budgets are stored in each user's Auth prefs, and name/email live in Appwrite Auth.
+Only `expenses` is a table. Categories, budgets, monthly salary, and lending records are stored in each user's Auth prefs, and name/email live in Appwrite Auth. No extra table columns are needed for salary or lending.
 
 1. **Project** → add a **Web platform** (hostname `localhost` + your production domain).
 2. **Auth** → Settings → enable *Email/Password*.

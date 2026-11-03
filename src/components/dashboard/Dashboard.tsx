@@ -8,23 +8,28 @@ const Card = ({ title, children }: { title: string; children: React.ReactNode })
 const tip = { contentStyle: { background: "#151c2c", color: "#edf2ff", border: "1px solid #29334a", borderRadius: 8 }, itemStyle: { color: "#edf2ff" }, labelStyle: { color: "#edf2ff" } };
 
 export default function Dashboard() {
-  const { categories, expenses, budget, loading } = useData();
+  const { categories, expenses, budget, finance, loading } = useData();
   const now = new Date(), mk = monthKey(now), warned = useRef(false);
   const d = useMemo(() => {
     const month = expenses.filter((e) => e.timestamp.startsWith(mk) || monthKey(new Date(e.timestamp)) === mk);
-    const spent = month.reduce((s, e) => s + e.amount, 0);
-    const today = month.filter((e) => new Date(e.timestamp).toDateString() === now.toDateString()).reduce((s, e) => s + e.amount, 0);
+    const expenseSpent = month.reduce((s, e) => s + e.amount, 0);
+    const lentThisMonth = finance.loans.filter((loan) => monthKey(new Date(loan.timestamp)) === mk).reduce((sum, loan) => sum + loan.amount, 0);
+    const spent = expenseSpent + lentThisMonth;
+    const today = month.filter((e) => new Date(e.timestamp).toDateString() === now.toDateString()).reduce((s, e) => s + e.amount, 0)
+      + finance.loans.filter((loan) => monthKey(new Date(loan.timestamp)) === mk && new Date(loan.timestamp).toDateString() === now.toDateString()).reduce((sum, loan) => sum + loan.amount, 0);
     const byCat: Record<string, number> = {}; month.forEach((e) => (byCat[e.categoryId] = (byCat[e.categoryId] ?? 0) + e.amount));
     const rows = categories.map((c) => ({ ...c, spent: byCat[c.$id] ?? 0, budget: budget?.limits[c.$id] ?? 0 }));
     let cum = 0; const trend = Array.from({ length: now.getDate() }, (_, i) => {
-      cum += month.filter((e) => new Date(e.timestamp).getDate() === i + 1).reduce((s, e) => s + e.amount, 0);
+      cum += month.filter((e) => new Date(e.timestamp).getDate() === i + 1).reduce((s, e) => s + e.amount, 0)
+        + finance.loans.filter((loan) => monthKey(new Date(loan.timestamp)) === mk && new Date(loan.timestamp).getDate() === i + 1).reduce((sum, loan) => sum + loan.amount, 0);
       return { day: i + 1, total: cum };
     });
-    return { spent, today, rows, trend, top: [...rows].sort((a, b) => b.spent - a.spent)[0] };
-  }, [expenses, categories, budget]);
+    return { spent, expenseSpent, today, rows, trend, top: [...rows].sort((a, b) => b.spent - a.spent)[0] };
+  }, [expenses, categories, budget, finance, mk]);
 
   const total = budget?.total ?? 0, daily = dailyLimit(total, d.spent, now), p = pace(total, d.spent, now);
   const pct = total ? (d.spent / total) * 100 : 0;
+  const savings = Math.max(finance.salary - total, 0);
   const shares = d.rows.filter((r) => r.spent > 0).sort((a, b) => b.spent - a.spent);
   useEffect(() => { if (pct > 90 && !warned.current) { warned.current = true; toast.warning(`You've used ${pct.toFixed(0)}% of this month's budget`); } }, [pct]);
   if (loading) return <p className="text-mute">Loading…</p>;
@@ -35,6 +40,14 @@ export default function Dashboard() {
         <div><p className="text-sm text-mute">Suggested daily limit</p>
           <p className="text-4xl font-bold text-accent">{total ? money(daily) : "Set a budget"}</p></div>
         <p className={`font-semibold ${p.cls}`}>{p.label}</p>
+      </section>
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+        <Card title="Monthly salary"><p className="text-xl font-bold">{finance.salary ? money(finance.salary) : "Not set"}</p>
+          <p className="text-xs text-mute">Set in Budget</p></Card>
+        <Card title="Planned budget"><p className="text-xl font-bold">{total ? money(total) : "Not set"}</p>
+          <p className="text-xs text-mute">This month's limit</p></Card>
+        <div className="col-span-2 sm:col-span-1"><Card title="Planned savings"><p className="text-xl font-bold text-emerald-400">{money(savings)}</p>
+          <p className="text-xs text-mute">{finance.salary > total ? "Salary left after budget" : finance.salary ? "Budget meets or exceeds salary" : "Add salary to see savings"}</p></Card></div>
       </section>
       <div className="grid gap-4 sm:grid-cols-3">
         <Card title="Spent this month"><p className="text-2xl font-bold">{money(d.spent)}</p>
@@ -58,7 +71,7 @@ export default function Dashboard() {
               </div>
               <div className="min-w-0 space-y-3 md:max-h-[220px] md:overflow-y-auto md:overscroll-contain md:pr-2">
                 {shares.map((r) => {
-                  const share = (r.spent / (d.spent || 1)) * 100;
+                  const share = (r.spent / (d.expenseSpent || 1)) * 100;
                   return (
                     <div key={r.$id} className="min-w-0">
                       <div className="flex min-w-0 items-center justify-between gap-3 text-sm">
