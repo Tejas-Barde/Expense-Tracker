@@ -17,5 +17,12 @@ export const addExpense = (uid: string, e: { amount: number; categoryId: string;
     data: { userId: uid, ...e },
     permissions: ownerPerms(uid),
   });
+export const updateExpense = (id: string, e: { amount: number; categoryId: string; note: string; timestamp: string }) =>
+  tablesDB.updateRow({
+    databaseId: DB,
+    tableId: TABLE.expenses,
+    rowId: id,
+    data: e,
+  });
 export const deleteExpense = (id: string) =>
   tablesDB.deleteRow({ databaseId: DB, tableId: TABLE.expenses, rowId: id });

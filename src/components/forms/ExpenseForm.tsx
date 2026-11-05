@@ -3,12 +3,12 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import Modal from "../Modal";
 import { useData } from "../../lib/hooks";
-import { addExpense } from "../../lib/services/expenses";
-import { addFriendPaidExpense, addLoan, normalizeFriendName } from "../../lib/services/finance";
-import { addExpenseToTrip, createTrip, listTrips } from "../../lib/services/trips";
-import type { Trip } from "../../types";
+import { addExpense, updateExpense } from "../../lib/services/expenses";
+import { addFriendPaidExpense, addLoan, normalizeFriendName, removeExpenseFinanceData } from "../../lib/services/finance";
+import { addExpenseToTrip, createTrip, listTrips, moveExpenseToTrip } from "../../lib/services/trips";
+import type { Expense, Trip } from "../../types";
 import { money } from "../../lib/utils";
-export default function ExpenseForm({ onClose }: { onClose: () => void }) {
+export default function ExpenseForm({ onClose, expense }: { onClose: () => void; expense?: Expense }) {
   const { uid, categories, expenses, finance } = useData(); const qc = useQueryClient();
   const [amount, setAmount] = useState(""); const [categoryId, setCat] = useState(""); const [note, setNote] = useState(""); const [dt, setDt] = useState(""); const [pickerOpen, setPickerOpen] = useState(false);
   const [paymentMode, setPaymentMode] = useState<"self" | "friend_paid" | "paid_for_friend">("self");
@@ -20,18 +20,53 @@ export default function ExpenseForm({ onClose }: { onClose: () => void }) {
   useEffect(() => { listTrips(uid).then(setTrips).catch(() => setTrips([])); }, [uid]);
   const [splitMode, setSplitMode] = useState<"equal" | "exact">("equal");
   const [splitFriends, setSplitFriends] = useState<{ name: string; share: string }[]>([]);
+  useEffect(() => {
+    if (!expense) return;
+    setAmount(String(expense.amount));
+    setCat(expense.categoryId);
+    setNote(expense.note ?? "");
+    const date = new Date(expense.timestamp);
+    const local = new Date(date.getTime() - date.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
+    setDt(local);
+    const friendPaid = finance.friendPaidExpenses?.find((item) => item.expenseId === expense.$id);
+    const sharedLoans = finance.loans.filter((loan) => loan.expenseId === expense.$id);
+    if (friendPaid) {
+      setPaymentMode("friend_paid");
+      setFriendName(friendPaid.friend);
+      setSplitMode("exact");
+      setSplitFriends([{ name: friendPaid.friend, share: String(Math.max(0, expense.amount - friendPaid.amount)) }]);
+    } else if (sharedLoans.length) {
+      setPaymentMode("paid_for_friend");
+      setSplitMode("exact");
+      setSplitFriends(sharedLoans.map((loan) => ({ name: loan.friend, share: String(loan.amount) })));
+    } else {
+      setPaymentMode("self");
+      setFriendName("");
+      setSplitFriends([]);
+    }
+  }, [expense, finance.friendPaidExpenses, finance.loans]);
+  useEffect(() => {
+    if (!expense || trips.length === 0) return;
+    const existingTrip = trips.find((trip) => trip.expenseIds.includes(expense.$id));
+    setTripId(existingTrip?.id ?? "");
+  }, [expense, trips]);
   const m = useMutation({
     mutationFn: async () => {
       const timestamp = dt ? new Date(dt).toISOString() : new Date().toISOString();
       const expenseAmount = parseFloat(amount);
-      const created = await addExpense(uid, { amount: expenseAmount, categoryId, note, timestamp });
+      const created = expense
+        ? await updateExpense(expense.$id, { amount: expenseAmount, categoryId, note, timestamp })
+        : await addExpense(uid, { amount: expenseAmount, categoryId, note, timestamp });
       let selectedTripId = tripId;
       if (newTripName.trim()) {
         const trip = await createTrip(uid, newTripName);
         selectedTripId = trip.id;
         setTrips((current) => [...current, trip]);
       }
-      if (selectedTripId) await addExpenseToTrip(selectedTripId, created.$id);
+      const expenseId = expense?.$id ?? created.$id;
+      if (expense) await moveExpenseToTrip(expenseId, selectedTripId);
+      else if (selectedTripId) await addExpenseToTrip(selectedTripId, expenseId);
+      if (expense) await removeExpenseFinanceData([expenseId]);
       if (paymentMode === "friend_paid") {
         const friendCount = Math.max(1, splitFriends.length + 1);
         const yourShare = splitMode === "equal"
@@ -40,7 +75,7 @@ export default function ExpenseForm({ onClose }: { onClose: () => void }) {
             ? Math.max(0, expenseAmount - splitFriends.reduce((sum, person) => sum + parseFloat(person.share || "0"), 0))
             : 0;
         await addFriendPaidExpense({
-          expenseId: created.$id,
+          expenseId,
           friend: normalizeFriendName(friendName),
           amount: yourShare,
           timestamp,
@@ -64,7 +99,7 @@ export default function ExpenseForm({ onClose }: { onClose: () => void }) {
             amount: share,
             note: note.trim() || "Paid through an expense",
             timestamp,
-            expenseId: created.$id,
+            expenseId,
           });
         }
       }
@@ -73,7 +108,7 @@ export default function ExpenseForm({ onClose }: { onClose: () => void }) {
       qc.invalidateQueries({ queryKey: ["expenses"] });
       qc.invalidateQueries({ queryKey: ["finance"] });
       qc.invalidateQueries({ queryKey: ["trips"] });
-      toast.success("Expense added");
+      toast.success(expense ? "Transaction updated" : "Expense added");
       onClose();
     },
     onError: (e: any) => toast.error(e.message),
@@ -97,7 +132,7 @@ export default function ExpenseForm({ onClose }: { onClose: () => void }) {
       || (paymentMode === "friend_paid" && normalizeFriendName(friendName).length > 0 && splitValid)
       || (paymentMode === "paid_for_friend" && splitValid));
   return (
-    <Modal title="Add expense" onClose={onClose}>
+    <Modal title={expense ? "Edit transaction" : "Add expense"} onClose={onClose}>
       <div className="space-y-3">
         <datalist id="expense-note-suggestions">
           {noteSuggestions.map((suggestion) => <option key={suggestion} value={suggestion} />)}
@@ -184,7 +219,9 @@ export default function ExpenseForm({ onClose }: { onClose: () => void }) {
         )}
         {paymentMode === "friend_paid" && <p className="text-sm text-amber-300">This expense is excluded from personal spending. Your calculated share is added to what you owe this payer.</p>}
         {paymentMode === "paid_for_friend" && <p className="text-sm text-emerald-300">Friend names are merged by name. Their shares are added to Owing, while your share increases category spending.</p>}
-        <button className="btn w-full disabled:opacity-40" disabled={!ok || m.isPending} onClick={() => m.mutate()}>Add expense</button>
+        <button className="btn w-full disabled:opacity-40" disabled={!ok || m.isPending} onClick={() => m.mutate()}>
+          {m.isPending ? "Saving…" : expense ? "Save changes" : "Add expense"}
+        </button>
       </div>
       {pickerOpen && <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 sm:items-center" role="presentation" onClick={() => setPickerOpen(false)}>
         <section className="w-full max-h-[75dvh] overflow-y-auto overscroll-contain rounded-t-2xl border border-line bg-panel p-4 pb-[calc(1rem+env(safe-area-inset-bottom))] sm:max-w-md sm:rounded-2xl"

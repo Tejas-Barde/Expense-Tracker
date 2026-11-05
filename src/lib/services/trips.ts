@@ -29,6 +29,19 @@ export async function addExpenseToTrip(tripId: string, expenseId: string): Promi
       : trip));
 }
 
+export async function moveExpenseToTrip(expenseId: string, tripId: string): Promise<void> {
+  const trips = await getJSON<Trip[]>(TRIPS_KEY, []);
+  await setJSON(TRIPS_KEY, trips.map((trip) => {
+    const withoutExpense = trip.expenseIds.filter((id) => id !== expenseId);
+    return {
+      ...trip,
+      expenseIds: trip.id === tripId
+        ? [...withoutExpense, expenseId]
+        : withoutExpense,
+    };
+  }));
+}
+
 export async function removeExpensesFromTrips(expenseIds: string[]): Promise<void> {
   const removed = new Set(expenseIds);
   const trips = await getJSON<Trip[]>(TRIPS_KEY, []);

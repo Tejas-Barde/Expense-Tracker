@@ -8,6 +8,8 @@ import { removeExpenseFinanceData } from "../lib/services/finance";
 import { removeExpensesFromTrips } from "../lib/services/trips";
 import { dayLabel, timeTag, money } from "../lib/utils";
 import Dashboard from "../components/dashboard/Dashboard";
+import ExpenseForm from "../components/forms/ExpenseForm";
+import type { Expense } from "../types";
 
 export default function Expenses() {
   const { uid, categories, expenses, finance } = useData();
@@ -18,6 +20,7 @@ export default function Expenses() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const [confirmIds, setConfirmIds] = useState<string[] | null>(null);
+  const [editExpense, setEditExpense] = useState<Expense | null>(null);
   const [showPreviousMonth, setShowPreviousMonth] = useState(true);
   const previousMonth = useMemo(() => {
     const now = new Date();
@@ -214,9 +217,16 @@ export default function Expenses() {
                       ? money(Math.max(expense.amount - sharedLoans.reduce((sum, loan) => sum + loan.amount, 0), 0))
                       : money(expense.amount)}
                 </span>
-                {!selectionMode && <button type="button" className="grid min-h-11 min-w-11 shrink-0 place-items-center rounded-lg text-mute hover:bg-red-500/10 hover:text-red-400"
-                  aria-label={`Delete transaction ${expense.note || category?.name || "without a note"}`}
-                  onClick={() => setConfirmIds([expense.$id])}>🗑</button>}
+                {!selectionMode && (
+                  <div className="ml-auto flex shrink-0 gap-1 sm:ml-0">
+                    <button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-lg text-mute hover:bg-accent/10 hover:text-accent"
+                      aria-label={`Edit transaction ${expense.note || category?.name || "without a note"}`}
+                      onClick={() => setEditExpense(expense)}>✎</button>
+                    <button type="button" className="grid min-h-11 min-w-11 place-items-center rounded-lg text-mute hover:bg-red-500/10 hover:text-red-400"
+                      aria-label={`Delete transaction ${expense.note || category?.name || "without a note"}`}
+                      onClick={() => setConfirmIds([expense.$id])}>🗑</button>
+                  </div>
+                )}
               </article>
             );
           })}</div>
@@ -264,6 +274,7 @@ export default function Expenses() {
           </div>
         </div>
       </Modal>}
+      {editExpense && <ExpenseForm expense={editExpense} onClose={() => setEditExpense(null)} />}
     </div>
   );
 }

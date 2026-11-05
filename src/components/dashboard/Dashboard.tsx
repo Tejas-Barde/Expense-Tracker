@@ -8,7 +8,7 @@ const Card = ({ title, children }: { title: string; children: React.ReactNode })
 const tip = { contentStyle: { background: "#151c2c", color: "#edf2ff", border: "1px solid #29334a", borderRadius: 8 }, itemStyle: { color: "#edf2ff" }, labelStyle: { color: "#edf2ff" } };
 
 export default function Dashboard({ month }: { month?: Date }) {
-  const { categories, expenses, budget, finance, loading } = useData(month);
+  const { categories, expenses, budget, finance, trips, loading } = useData(month);
   const now = month ?? new Date(), mk = monthKey(now), warned = useRef(false);
   const isPastMonth = !!month && mk !== monthKey(new Date());
   const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
@@ -30,10 +30,20 @@ export default function Dashboard({ month }: { month?: Date }) {
     const spent = expenseSpent + lentThisMonth;
     const today = month.filter((e) => new Date(e.timestamp).toDateString() === now.toDateString()).reduce((s, e) => s + personalShareFor(e.$id, e.amount), 0)
       + finance.loans.filter((loan) => !loan.expenseId && monthKey(new Date(loan.timestamp)) === mk && new Date(loan.timestamp).toDateString() === now.toDateString()).reduce((sum, loan) => sum + loan.amount, 0);
-    const byCat: Record<string, number> = {}; month.forEach((expense) => {
+    const tripExpenseIds = new Set(trips.flatMap((trip) => trip.expenseIds));
+    const tripSpent = month
+      .filter((expense) => tripExpenseIds.has(expense.$id))
+      .reduce((sum, expense) => sum + personalShareFor(expense.$id, expense.amount), 0);
+    const byCat: Record<string, number> = {};
+    month.forEach((expense) => {
+      if (tripExpenseIds.has(expense.$id)) return;
       byCat[expense.categoryId] = (byCat[expense.categoryId] ?? 0) + personalShareFor(expense.$id, expense.amount);
     });
-    const rows = categories.map((c) => ({ ...c, spent: byCat[c.$id] ?? 0, budget: budget?.limits[c.$id] ?? 0 }));
+    byCat["__trip__"] = tripSpent;
+    const rows = [
+      ...categories.map((c) => ({ ...c, spent: byCat[c.$id] ?? 0, budget: budget?.limits[c.$id] ?? 0 })),
+      { $id: "__trip__", userId: "", name: "Trip", color: "#a78bfa", isDefault: false, spent: tripSpent, budget: 0 },
+    ];
     const moneyOwed = finance.loans.reduce((sum, loan) => sum + Math.max(loan.amount - loan.repaid, 0), 0);
     const received = finance.loans.reduce((sum, loan) =>
       sum + (loan.repayments ?? []).filter((payment) => monthKey(new Date(payment.timestamp)) === mk)
@@ -48,8 +58,8 @@ export default function Dashboard({ month }: { month?: Date }) {
         + finance.loans.filter((loan) => !loan.expenseId && monthKey(new Date(loan.timestamp)) === mk && new Date(loan.timestamp).getDate() === i + 1).reduce((sum, loan) => sum + loan.amount, 0);
       return { day: i + 1, total: cum };
     });
-    return { spent, expenseSpent, friendPaid, received, moneyOwed, oweToFriends, paidToFriends, today, rows, trend, average: spent / daysInMonth, top: [...rows].sort((a, b) => b.spent - a.spent)[0] };
-  }, [expenses, categories, budget, finance, mk, isPastMonth, daysInMonth, now]);
+    return { spent, expenseSpent, tripSpent, friendPaid, received, moneyOwed, oweToFriends, paidToFriends, today, rows, trend, average: spent / daysInMonth, top: [...rows].sort((a, b) => b.spent - a.spent)[0] };
+  }, [expenses, categories, budget, finance, trips, mk, isPastMonth, daysInMonth, now]);
 
   const monthEnd = month ? new Date(month.getFullYear(), month.getMonth() + 1, 0) : now;
   const total = budget?.total ?? 0;
@@ -78,7 +88,7 @@ export default function Dashboard({ month }: { month?: Date }) {
         <div className="col-span-2 sm:col-span-1"><Card title="Planned savings"><p className="text-xl font-bold text-emerald-400">{money(savings)}</p>
           <p className="text-xs text-mute">{finance.salary ? `${money(salaryLeft)} salary left after budget and savings` : "Add salary to see remaining salary"}</p></Card></div>
       </section>
-      <div className="grid gap-4 sm:grid-cols-3">
+      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card title={isPastMonth ? "Spent in month" : "Spent this month"}><p className="text-2xl font-bold">{money(d.spent)}</p>
           <p className="text-sm text-mute">of {total ? money(total) : "no budget"}</p>
           <div className="h-2 mt-2 bg-ink rounded"><div className={`h-2 rounded ${barColor(pct)}`} style={{ width: `${Math.min(pct, 100)}%` }} /></div></Card>
@@ -86,6 +96,10 @@ export default function Dashboard({ month }: { month?: Date }) {
           <p className={`text-sm ${total && !isPastMonth && d.today > daily ? "text-red-400" : "text-mute"}`}>{isPastMonth ? `${daysInMonth} days in month` : `limit ${total ? money(daily) : "—"}`}</p></Card>
         <Card title="Top category"><p className="text-2xl font-bold text-text">{d.top?.spent ? d.top.name : "—"}</p>
           <p className="text-sm text-mute">{d.top?.spent ? money(d.top.spent) : "No spending yet"}</p></Card>
+        <Card title="Trip spending"><p className="text-2xl font-bold text-violet-300">{money(d.tripSpent)}</p>
+          <p className="text-sm text-mute">{finance.salary
+            ? `${((d.tripSpent / finance.salary) * 100).toFixed(0)}% of monthly salary`
+            : "Add salary to compare"}</p></Card>
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
         <Card title="Paid by friends"><p className="text-xl font-bold text-sky-300">{money(d.friendPaid)}</p>
