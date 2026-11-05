@@ -1,10 +1,12 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import Modal from "../Modal";
 import { useData } from "../../lib/hooks";
 import { addExpense } from "../../lib/services/expenses";
 import { addFriendPaidExpense, addLoan, normalizeFriendName } from "../../lib/services/finance";
+import { addExpenseToTrip, createTrip, listTrips } from "../../lib/services/trips";
+import type { Trip } from "../../types";
 import { money } from "../../lib/utils";
 export default function ExpenseForm({ onClose }: { onClose: () => void }) {
   const { uid, categories, expenses, finance } = useData(); const qc = useQueryClient();
@@ -12,6 +14,10 @@ export default function ExpenseForm({ onClose }: { onClose: () => void }) {
   const [paymentMode, setPaymentMode] = useState<"self" | "friend_paid" | "paid_for_friend">("self");
   const [friendName, setFriendName] = useState("");
   const [friendShare, setFriendShare] = useState("");
+  const [trips, setTrips] = useState<Trip[]>([]);
+  const [tripId, setTripId] = useState("");
+  const [newTripName, setNewTripName] = useState("");
+  useEffect(() => { listTrips(uid).then(setTrips).catch(() => setTrips([])); }, [uid]);
   const [splitMode, setSplitMode] = useState<"equal" | "exact">("equal");
   const [splitFriends, setSplitFriends] = useState<{ name: string; share: string }[]>([]);
   const m = useMutation({
@@ -19,6 +25,13 @@ export default function ExpenseForm({ onClose }: { onClose: () => void }) {
       const timestamp = dt ? new Date(dt).toISOString() : new Date().toISOString();
       const expenseAmount = parseFloat(amount);
       const created = await addExpense(uid, { amount: expenseAmount, categoryId, note, timestamp });
+      let selectedTripId = tripId;
+      if (newTripName.trim()) {
+        const trip = await createTrip(uid, newTripName);
+        selectedTripId = trip.id;
+        setTrips((current) => [...current, trip]);
+      }
+      if (selectedTripId) await addExpenseToTrip(selectedTripId, created.$id);
       if (paymentMode === "friend_paid") {
         const friendCount = Math.max(1, splitFriends.length + 1);
         const yourShare = splitMode === "equal"
@@ -59,6 +72,7 @@ export default function ExpenseForm({ onClose }: { onClose: () => void }) {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["expenses"] });
       qc.invalidateQueries({ queryKey: ["finance"] });
+      qc.invalidateQueries({ queryKey: ["trips"] });
       toast.success("Expense added");
       onClose();
     },
@@ -102,6 +116,18 @@ export default function ExpenseForm({ onClose }: { onClose: () => void }) {
           ) : <span className="text-mute">Choose category</span>}
           <span aria-hidden="true" className="shrink-0 text-mute">⌄</span>
         </button>
+        <fieldset className="rounded-xl border border-line bg-ink p-3">
+          <legend className="px-1 text-sm text-mute">Trip (optional)</legend>
+          <select className="input" value={tripId} onChange={(event) => { setTripId(event.target.value); if (event.target.value) setNewTripName(""); }}>
+            <option value="">No trip</option>
+            {trips.map((trip) => <option key={trip.id} value={trip.id}>{trip.name}</option>)}
+          </select>
+          <div className="mt-2 flex items-center gap-2">
+            <span className="text-xs text-mute">or</span>
+            <input className="input flex-1" value={newTripName} placeholder="Create a trip, e.g. Goa 2026"
+              onChange={(event) => { setNewTripName(event.target.value); if (event.target.value) setTripId(""); }} />
+          </div>
+        </fieldset>
         <input className="input" list="expense-note-suggestions" placeholder="Note (optional)" value={note} onChange={(e) => setNote(e.target.value)} />
         <label className="block text-sm text-mute">Date & time (leave empty to use right now)
           <input className="input mt-1" type="datetime-local" value={dt} onChange={(e) => setDt(e.target.value)} /></label>

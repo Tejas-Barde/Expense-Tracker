@@ -10,6 +10,7 @@ import ExpenseForm from "./components/forms/ExpenseForm";
 import BudgetForm from "./components/forms/BudgetForm";
 import CategoryForm from "./components/forms/CategoryForm";
 import Owing from "./pages/Owing";
+import Trips from "./pages/Trips";
 
 function Layout() {
   const { user, loading, logout } = useAuth();
@@ -22,7 +23,7 @@ function Layout() {
     <div className="min-h-dvh md:flex">
       <aside className="hidden md:flex flex-col gap-2 w-56 p-4 border-r border-line sticky top-0 h-screen">
         <h1 className="text-xl font-bold mb-4">Ledgerly</h1>
-        <NavLink to="/" end className={link}>Dashboard</NavLink><NavLink to="/history" className={link}>History</NavLink><NavLink to="/owing" className={link}>Owing</NavLink>
+        <NavLink to="/" end className={link}>Dashboard</NavLink><NavLink to="/history" className={link}>History</NavLink><NavLink to="/owing" className={link}>Owing</NavLink><NavLink to="/trips" className={link}>Trips</NavLink>
         <button className="btn-ghost mt-4" onClick={() => setModal("budget")}>Budget</button>
         <button className="btn-ghost" onClick={() => setModal("category")}>New category</button>
         <button className="mt-auto text-mute text-sm text-left" onClick={logout}>Log out ({user.name})</button>
@@ -34,10 +35,11 @@ function Layout() {
         </div>
         <Outlet />
       </main>
-      <nav aria-label="Main navigation" className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-panel/95 backdrop-blur border-t border-line grid grid-cols-6 items-center px-1 pt-2 pb-[calc(.5rem+env(safe-area-inset-bottom))] text-[10px]">
+      <nav aria-label="Main navigation" className="md:hidden fixed bottom-0 inset-x-0 z-40 bg-panel/95 backdrop-blur border-t border-line grid grid-cols-7 items-center px-1 pt-2 pb-[calc(.5rem+env(safe-area-inset-bottom))] text-[10px]">
         <NavLink to="/" end className={mobileLink}>Dashboard</NavLink>
         <NavLink to="/history" className={mobileLink}>History</NavLink>
         <NavLink to="/owing" className={mobileLink}>Owing</NavLink>
+        <NavLink to="/trips" className={mobileLink}>Trips</NavLink>
         <button className="min-w-0 min-h-11 px-1 py-2 text-mute" onClick={() => setModal("budget")}>Budget</button>
         <button className="min-w-0 min-h-11 px-1 py-2 text-mute" onClick={() => setModal("category")}>Category</button>
         <button className="min-w-0 min-h-11 px-1 py-2 text-mute" onClick={logout}>Log out</button>
@@ -53,7 +55,7 @@ export default function App() {
   return (
     <QueryClientProvider client={qc}><AuthProvider><BrowserRouter>
       <Routes><Route path="/login" element={<Auth />} />
-        <Route element={<Layout />}><Route index element={<Dashboard />} /><Route path="history" element={<Expenses />} /><Route path="expenses" element={<Expenses />} /><Route path="owing" element={<Owing />} /></Route></Routes>
+        <Route element={<Layout />}><Route index element={<Dashboard />} /><Route path="history" element={<Expenses />} /><Route path="expenses" element={<Expenses />} /><Route path="owing" element={<Owing />} /><Route path="trips" element={<Trips />} /></Route></Routes>
       <Toaster theme="dark" richColors position="top-right" />
     </BrowserRouter></AuthProvider></QueryClientProvider>
   );

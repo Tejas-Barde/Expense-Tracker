@@ -5,6 +5,7 @@ import Modal from "../components/Modal";
 import { useData } from "../lib/hooks";
 import { deleteExpense } from "../lib/services/expenses";
 import { removeExpenseFinanceData } from "../lib/services/finance";
+import { removeExpensesFromTrips } from "../lib/services/trips";
 import { dayLabel, timeTag, money } from "../lib/utils";
 import Dashboard from "../components/dashboard/Dashboard";
 
@@ -59,6 +60,7 @@ export default function Expenses() {
       const results = await Promise.allSettled(ids.map((id) => deleteExpense(id)));
       const deleted = ids.filter((_, index) => results[index].status === "fulfilled");
       if (deleted.length) await removeExpenseFinanceData(deleted);
+      if (deleted.length) await removeExpensesFromTrips(deleted);
       return {
         deleted,
         failed: ids.filter((_, index) => results[index].status === "rejected"),
@@ -67,6 +69,7 @@ export default function Expenses() {
     onSuccess: ({ deleted, failed }) => {
       qc.invalidateQueries({ queryKey: ["expenses"] });
       qc.invalidateQueries({ queryKey: ["finance", uid] });
+      qc.invalidateQueries({ queryKey: ["trips"] });
       setSelectedIds(new Set(failed));
       if (failed.length) {
         setConfirmIds(failed);

@@ -19,6 +19,12 @@ export interface FriendPaidExpense {
   repaid?: number;
   repayments?: { amount: number; timestamp: string }[];
 }
+export interface Trip {
+  id: string;
+  name: string;
+  timestamp: string;
+  expenseIds: string[];
+}
 export interface FinanceData {
   salary: number;
   loans: Loan[];
