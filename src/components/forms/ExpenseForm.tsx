@@ -33,8 +33,8 @@ export default function ExpenseForm({ onClose, expense }: { onClose: () => void;
     if (friendPaid) {
       setPaymentMode("friend_paid");
       setFriendName(friendPaid.friend);
-      setSplitMode("exact");
-      setSplitFriends([{ name: friendPaid.friend, share: String(Math.max(0, expense.amount - friendPaid.amount)) }]);
+      setSplitMode("equal");
+      setSplitFriends([]);
     } else if (sharedLoans.length) {
       setPaymentMode("paid_for_friend");
       setSplitMode("exact");
@@ -118,7 +118,9 @@ export default function ExpenseForm({ onClose, expense }: { onClose: () => void;
   const exactShares = splitFriends.reduce((sum, person) => sum + parseFloat(person.share || "0"), 0);
   const hasValidFriends = splitFriends.length === 0 || splitFriends.every((person) => normalizeFriendName(person.name).length > 0);
   const splitValid = splitMode === "equal"
-    ? splitFriends.length > 0 && hasValidFriends
+    ? paymentMode === "friend_paid"
+      ? hasValidFriends
+      : splitFriends.length > 0 && hasValidFriends
     : splitFriends.length > 0 && exactShares > 0 && exactShares <= expenseAmount && hasValidFriends;
   const friendSuggestions = [...new Set([
     ...finance.loans.map((loan) => normalizeFriendName(loan.friend)),
@@ -212,7 +214,9 @@ export default function ExpenseForm({ onClose, expense }: { onClose: () => void;
             </div>
             <p className="text-xs text-mute">
               {splitMode === "equal"
-                ? `Estimated share: ${expenseAmount > 0 && splitFriends.length > 0 ? money(expenseAmount / (splitFriends.length + 1)) : "—"}`
+                ? `Estimated ${paymentMode === "friend_paid" ? "your share" : "each share"}: ${expenseAmount > 0 && (paymentMode === "friend_paid" || splitFriends.length > 0)
+                  ? money(expenseAmount / (splitFriends.length + 1))
+                  : "—"}`
                 : `Friend shares entered: ${money(exactShares)} · Your share: ${money(Math.max(expenseAmount - exactShares, 0))}`}
             </p>
           </div>

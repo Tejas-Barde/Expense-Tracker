@@ -34,8 +34,7 @@ export default function Expenses() {
       const friendShare = sharedLoans.reduce((sum, loan) => sum + loan.amount, 0);
       return Math.max(expense.amount - friendShare, 0);
     }
-    const friendPaid = finance.friendPaidExpenses?.find((item) => item.expenseId === expense.$id);
-    return friendPaid ? 0 : expense.amount;
+    return expense.amount;
   };
 
   const visibleExpenses = useMemo(() => {
@@ -211,9 +210,7 @@ export default function Expenses() {
                 </span>}
                 {friendOwes && <span className="shrink-0 text-xs text-mute">{money(expense.amount)} total paid</span>}
                 <span className="ml-auto whitespace-nowrap font-semibold">
-                  {friendPaid
-                    ? money(0)
-                    : sharedLoans.length
+                  {sharedLoans.length
                       ? money(Math.max(expense.amount - sharedLoans.reduce((sum, loan) => sum + loan.amount, 0), 0))
                       : money(expense.amount)}
                 </span>

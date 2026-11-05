@@ -51,6 +51,8 @@ export default function Owing() {
     current.youOweThem += Math.max(debt.amount - (debt.repaid ?? 0), 0);
     balances.set(key, current);
   });
+  const netBalance = [...balances.values()].reduce((sum, balance) =>
+    sum + balance.theyOweYou - balance.youOweThem, 0);
 
   if (loading) return <p className="text-mute">Loading…</p>;
   return (
@@ -59,11 +61,18 @@ export default function Owing() {
         <div><h2 className="text-xl font-bold">Owing</h2><p className="text-sm text-mute">Track money friends owe you and money you owe friends.</p></div>
         <button className="btn shrink-0" onClick={() => setShowForm(true)}>Lend money</button>
       </header>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
         <Summary title="Total lent" amount={totalLent} />
         <Summary title="Paid back" amount={totalRepaid} />
         <Summary title="Still owed" amount={outstanding} prominent />
         <Summary title="You owe friends" amount={totalOwedToFriends} />
+        <Summary
+          title="Net settlement"
+          amount={Math.abs(netBalance)}
+          prominent={netBalance !== 0}
+          suffix={netBalance > 0 ? "owed to you" : netBalance < 0 ? "you owe" : "settled up"}
+          negative={netBalance < 0}
+        />
       </div>
       {balances.size > 0 && (
         <section className="rounded-xl border border-line bg-panel p-4">
@@ -159,9 +168,16 @@ export default function Owing() {
   );
 }
 
-function Summary({ title, amount, prominent = false }: { title: string; amount: number; prominent?: boolean }) {
+function Summary({ title, amount, prominent = false, suffix, negative = false }: {
+  title: string;
+  amount: number;
+  prominent?: boolean;
+  suffix?: string;
+  negative?: boolean;
+}) {
   return <section className="rounded-xl border border-line bg-panel p-4">
     <p className="text-sm text-mute">{title}</p>
-    <p className={`mt-1 text-2xl font-bold ${prominent ? "text-emerald-400" : ""}`}>{money(amount)}</p>
+    <p className={`mt-1 text-2xl font-bold ${negative ? "text-red-300" : prominent ? "text-emerald-400" : ""}`}>{money(amount)}</p>
+    {suffix && <p className="mt-1 text-xs text-mute">{suffix}</p>}
   </section>;
 }

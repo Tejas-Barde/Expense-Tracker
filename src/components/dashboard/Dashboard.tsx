@@ -13,13 +13,11 @@ export default function Dashboard({ month }: { month?: Date }) {
   const isPastMonth = !!month && mk !== monthKey(new Date());
   const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
   const d = useMemo(() => {
-    const friendPaidIds = new Set((finance.friendPaidExpenses ?? []).map((item) => item.expenseId));
     const friendPaid = (finance.friendPaidExpenses ?? [])
       .filter((item) => monthKey(new Date(item.timestamp)) === mk)
       .reduce((sum, item) => sum + item.amount, 0);
     const month = expenses.filter((e) =>
-      (e.timestamp.startsWith(mk) || monthKey(new Date(e.timestamp)) === mk)
-      && !friendPaidIds.has(e.$id));
+      e.timestamp.startsWith(mk) || monthKey(new Date(e.timestamp)) === mk);
     const personalShareFor = (expenseId: string, fallback: number) => {
       const linkedLoans = finance.loans.filter((loan) => loan.expenseId === expenseId);
       const friendShare = linkedLoans.reduce((sum, loan) => sum + loan.amount, 0);
