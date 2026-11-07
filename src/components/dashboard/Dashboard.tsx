@@ -66,7 +66,8 @@ export default function Dashboard({ month }: { month?: Date }) {
   const pct = total ? (d.spent / total) * 100 : 0;
   const configuredSavings = budget?.savings ?? 0;
   const savings = Math.max(configuredSavings, 0);
-  const salaryLeft = Math.max(finance.salary - total - savings, 0);
+  const salaryAllocationLeft = finance.salary - total - savings;
+  const salaryRemaining = finance.salary - d.spent - savings;
   const shares = d.rows.filter((r) => r.spent > 0).sort((a, b) => b.spent - a.spent);
   useEffect(() => { if (!isPastMonth && pct > 90 && !warned.current) { warned.current = true; toast.warning(`You've used ${pct.toFixed(0)}% of this month's budget`); } }, [pct, isPastMonth]);
   if (loading) return <p className="text-mute">Loading…</p>;
@@ -78,13 +79,27 @@ export default function Dashboard({ month }: { month?: Date }) {
           <p className="text-4xl font-bold text-accent">{total ? money(daily) : "Set a budget"}</p></div>
         <p className={`font-semibold ${p.cls}`}>{p.label}</p>
       </section>
-      <section className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+      <section className="grid grid-cols-2 gap-3 sm:grid-cols-4">
         <Card title="Monthly salary"><p className="text-xl font-bold">{finance.salary ? money(finance.salary) : "Not set"}</p>
           <p className="text-xs text-mute">Set in Budget</p></Card>
         <Card title="Planned budget"><p className="text-xl font-bold">{total ? money(total) : "Not set"}</p>
           <p className="text-xs text-mute">{isPastMonth ? "Monthly limit" : "This month's limit"}</p></Card>
-        <div className="col-span-2 sm:col-span-1"><Card title="Planned savings"><p className="text-xl font-bold text-emerald-400">{money(savings)}</p>
-          <p className="text-xs text-mute">{finance.salary ? `${money(salaryLeft)} salary left after budget and savings` : "Add salary to see remaining salary"}</p></Card></div>
+        <Card title="Planned savings"><p className="text-xl font-bold text-emerald-400">{money(savings)}</p>
+          <p className="text-xs text-mute">
+            {finance.salary
+              ? salaryAllocationLeft >= 0
+                ? `${money(salaryAllocationLeft)} left to allocate`
+                : `${money(Math.abs(salaryAllocationLeft))} over salary allocation`
+              : "Add salary to see allocation"}
+          </p></Card>
+        <Card title="Salary remaining"><p className={`text-xl font-bold ${salaryRemaining < 0 ? "text-red-300" : "text-accent"}`}>
+          {finance.salary ? `${salaryRemaining < 0 ? "-" : ""}${money(Math.abs(salaryRemaining))}` : "Not set"}
+        </p>
+          <p className="text-xs text-mute">{finance.salary
+            ? salaryRemaining >= 0
+              ? "After spending and planned savings"
+              : "Spent and savings exceed salary"
+            : "Add salary to see remaining salary"}</p></Card>
       </section>
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         <Card title={isPastMonth ? "Spent in month" : "Spent this month"}><p className="text-2xl font-bold">{money(d.spent)}</p>

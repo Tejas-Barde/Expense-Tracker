@@ -80,6 +80,47 @@ export async function updateFriendPaidRepaid(expenseId: string, repaid: number) 
   });
 }
 
+export async function recordFriendSettlement(friendName: string, direction: "to_friend" | "from_friend", amount: number) {
+  if (!Number.isFinite(amount) || amount <= 0) throw new Error("Enter an amount greater than zero.");
+  const finance = await getFinance();
+  const key = friendNameKey(friendName);
+  const timestamp = new Date().toISOString();
+  let remaining = amount;
+
+  if (direction === "to_friend") {
+    const debts = finance.friendPaidExpenses ?? [];
+    const updated = debts.map((debt) => {
+      if (!remaining || friendNameKey(debt.friend) !== key) return debt;
+      const due = Math.max(debt.amount - (debt.repaid ?? 0), 0);
+      const applied = Math.min(due, remaining);
+      if (applied <= 0) return debt;
+      remaining -= applied;
+      const repaid = (debt.repaid ?? 0) + applied;
+      return {
+        ...debt,
+        repaid,
+        repayments: [...(debt.repayments ?? []), { amount: applied, timestamp }],
+      };
+    });
+    await saveFinance({ ...finance, friendPaidExpenses: updated });
+  } else {
+    const updatedLoans = finance.loans.map((loan) => {
+      if (!remaining || friendNameKey(loan.friend) !== key) return loan;
+      const due = Math.max(loan.amount - loan.repaid, 0);
+      const applied = Math.min(due, remaining);
+      if (applied <= 0) return loan;
+      remaining -= applied;
+      const repaid = loan.repaid + applied;
+      return {
+        ...loan,
+        repaid,
+        repayments: [...(loan.repayments ?? []), { amount: applied, timestamp }],
+      };
+    });
+    await saveFinance({ ...finance, loans: updatedLoans });
+  }
+}
+
 export async function removeExpenseFinanceData(expenseIds: string[]) {
   const finance = await getFinance();
   const removed = new Set(expenseIds);

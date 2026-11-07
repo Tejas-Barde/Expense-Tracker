@@ -3,29 +3,20 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useData } from "../lib/hooks";
 import { money } from "../lib/utils";
-import { friendNameKey, normalizeFriendName, updateFriendPaidRepaid, updateLoanRepaid } from "../lib/services/finance";
+import { friendNameKey, normalizeFriendName, recordFriendSettlement } from "../lib/services/finance";
 import LendingForm from "../components/forms/LendingForm";
 
 export default function Owing() {
   const { uid, finance, loading } = useData();
   const qc = useQueryClient();
   const [showForm, setShowForm] = useState(false);
-  const [repayments, setRepayments] = useState<Record<string, string>>({});
-  const [paymentsReceived, setPaymentsReceived] = useState<Record<string, string>>({});
-  const [paymentsToFriend, setPaymentsToFriend] = useState<Record<string, string>>({});
-  const mutation = useMutation({
-    mutationFn: ({ id, repaid }: { id: string; repaid: number }) => updateLoanRepaid(id, repaid),
+  const [settlementAmounts, setSettlementAmounts] = useState<Record<string, string>>({});
+  const settlementMutation = useMutation({
+    mutationFn: ({ friend, direction, amount }: { friend: string; direction: "to_friend" | "from_friend"; amount: number }) =>
+      recordFriendSettlement(friend, direction, amount),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["finance", uid] });
-      toast.success("Payment received updated");
-    },
-    onError: (error: Error) => toast.error(error.message),
-  });
-  const debtMutation = useMutation({
-    mutationFn: ({ expenseId, repaid }: { expenseId: string; repaid: number }) => updateFriendPaidRepaid(expenseId, repaid),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["finance", uid] });
-      toast.success("Payment to friend updated");
+      toast.success("Settlement updated");
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -81,12 +72,37 @@ export default function Owing() {
           <div className="space-y-2">
             {[...balances.values()].map((balance) => {
               const net = balance.theyOweYou - balance.youOweThem;
+              const key = friendNameKey(balance.name);
+              const amount = Number(settlementAmounts[key] ?? "");
               return (
-                <div key={friendNameKey(balance.name)} className="flex items-center justify-between gap-3 rounded-lg bg-ink px-3 py-2">
-                  <span className="truncate font-medium">{balance.name}</span>
-                  <span className={`shrink-0 text-sm font-semibold ${net > 0 ? "text-emerald-400" : net < 0 ? "text-red-300" : "text-mute"}`}>
-                    {net > 0 ? `${money(net)} is owed to you` : net < 0 ? `You owe ${money(Math.abs(net))}` : "Settled up"}
-                  </span>
+                <div key={key} className="rounded-lg bg-ink p-3">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="truncate font-medium">{balance.name}</span>
+                    <span className={`shrink-0 text-sm font-semibold ${net > 0 ? "text-emerald-400" : net < 0 ? "text-red-300" : "text-mute"}`}>
+                      {net > 0 ? `${money(net)} is owed to you` : net < 0 ? `You owe ${money(Math.abs(net))}` : "Settled up"}
+                    </span>
+                  </div>
+                  {net !== 0 && (
+                    <div className="mt-3 flex flex-wrap items-end gap-2">
+                      <label className="min-w-0 flex-1 text-xs text-mute">Settlement amount
+                        <input className="input mt-1" type="number" min="0.01" step="0.01" inputMode="decimal"
+                          value={settlementAmounts[key] ?? ""} placeholder="Enter amount paid"
+                          onChange={(event) => setSettlementAmounts({ ...settlementAmounts, [key]: event.target.value })} />
+                      </label>
+                      <button className="btn-ghost disabled:opacity-40"
+                        disabled={settlementMutation.isPending || amount <= 0}
+                        onClick={() => settlementMutation.mutate(
+                          { friend: balance.name, direction: "to_friend", amount },
+                          { onSuccess: () => setSettlementAmounts({ ...settlementAmounts, [key]: "" }) },
+                        )}>I paid</button>
+                      <button className="btn disabled:opacity-40"
+                        disabled={settlementMutation.isPending || amount <= 0}
+                        onClick={() => settlementMutation.mutate(
+                          { friend: balance.name, direction: "from_friend", amount },
+                          { onSuccess: () => setSettlementAmounts({ ...settlementAmounts, [key]: "" }) },
+                        )}>Friend paid</button>
+                    </div>
+                  )}
                 </div>
               );
             })}
@@ -101,24 +117,11 @@ export default function Owing() {
           </div>
           {debtsToFriends.map((debt) => {
             const due = Math.max(debt.amount - (debt.repaid ?? 0), 0);
-            const payment = Number(paymentsToFriend[debt.expenseId] ?? "");
             return (
               <article key={debt.expenseId} className="rounded-xl border border-line bg-panel p-4">
                 <div className="flex items-start justify-between gap-3">
                   <div><h4 className="font-semibold">{debt.friend || "Friend"}</h4><p className="text-xs text-mute">{new Date(debt.timestamp).toLocaleDateString()}</p></div>
                   <div className="text-right"><p className="font-semibold">{money(debt.amount)} borrowed</p><p className="text-sm text-red-300">{money(due)} you owe</p></div>
-                </div>
-                <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-line pt-3">
-                  <label className="min-w-0 flex-1 text-xs text-mute">Payment made to friend
-                    <input className="input mt-1" type="number" min="0.01" max={due} step="0.01" inputMode="decimal"
-                      value={paymentsToFriend[debt.expenseId] ?? ""} placeholder="Enter amount paid"
-                      onChange={(event) => setPaymentsToFriend({ ...paymentsToFriend, [debt.expenseId]: event.target.value })} /></label>
-                  <button className="btn disabled:opacity-40"
-                    disabled={debtMutation.isPending || payment <= 0 || payment > due}
-                    onClick={() => debtMutation.mutate(
-                      { expenseId: debt.expenseId, repaid: (debt.repaid ?? 0) + payment },
-                      { onSuccess: () => setPaymentsToFriend({ ...paymentsToFriend, [debt.expenseId]: "" }) },
-                    )}>Record payment</button>
                 </div>
               </article>
             );
@@ -132,33 +135,12 @@ export default function Owing() {
       <div className="space-y-3">
         {finance.loans.map((loan) => {
           const due = Math.max(loan.amount - loan.repaid, 0);
-          const value = repayments[loan.id] ?? String(loan.repaid);
-          const payment = Number(paymentsReceived[loan.id] ?? "");
           return <section key={loan.id} className="min-w-0 rounded-xl border border-line bg-panel p-4">
             <div className="flex min-w-0 items-start justify-between gap-3">
               <div className="min-w-0"><h3 className="truncate font-semibold">{loan.friend}</h3>
                 <p className="text-xs text-mute">{new Date(loan.timestamp).toLocaleDateString()} {loan.note && `· ${loan.note}`}</p></div>
               <div className="shrink-0 text-right"><p className="font-semibold">{money(loan.amount)} lent</p>
                 <p className="text-sm text-emerald-400">{money(due)} owed</p></div>
-            </div>
-            <div className="mt-3 flex flex-wrap items-end gap-2 border-t border-line pt-3">
-              <label className="min-w-0 flex-1 text-xs text-mute">Payment received from friend
-                <input className="input mt-1" type="number" min="0.01" max={due} step="0.01" inputMode="decimal"
-                  value={paymentsReceived[loan.id] ?? ""} placeholder="Enter amount received"
-                  onChange={(event) => setPaymentsReceived({ ...paymentsReceived, [loan.id]: event.target.value })} /></label>
-              <button className="btn disabled:opacity-40"
-                disabled={mutation.isPending || payment <= 0 || payment > due}
-                onClick={() => {
-                  mutation.mutate(
-                    { id: loan.id, repaid: loan.repaid + payment },
-                    { onSuccess: () => setPaymentsReceived({ ...paymentsReceived, [loan.id]: "" }) },
-                  );
-                }}>Record payment</button>
-              <label className="min-w-0 basis-full text-xs text-mute sm:basis-auto">Total paid back
-                <input className="input mt-1 sm:w-36" type="number" min="0" max={loan.amount} step="0.01" inputMode="decimal" value={value}
-                  onChange={(event) => setRepayments({ ...repayments, [loan.id]: event.target.value })} /></label>
-              <button className="btn-ghost disabled:opacity-40" disabled={mutation.isPending || Number(value) < 0 || Number(value) > loan.amount}
-                onClick={() => mutation.mutate({ id: loan.id, repaid: Number(value) })}>Update</button>
             </div>
           </section>;
         })}
