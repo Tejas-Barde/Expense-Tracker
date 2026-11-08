@@ -10,10 +10,15 @@ export function listTrips(uid: string): Promise<Trip[]> {
 
 export async function createTrip(uid: string, name: string): Promise<Trip> {
   void uid;
+  const trimmedName = name.trim();
+  if (!trimmedName) throw new Error("Enter a trip name.");
   const trips = await getJSON<Trip[]>(TRIPS_KEY, []);
+  if (trips.some((trip) => trip.name.trim().toLocaleLowerCase() === trimmedName.toLocaleLowerCase())) {
+    throw new Error("A trip with this name already exists.");
+  }
   const trip: Trip = {
     id: crypto.randomUUID(),
-    name: name.trim(),
+    name: trimmedName,
     timestamp: new Date().toISOString(),
     expenseIds: [],
   };

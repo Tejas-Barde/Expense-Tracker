@@ -15,10 +15,11 @@ export default function Dashboard({ month }: { month?: Date }) {
   const d = useMemo(() => {
     const friendPaid = (finance.friendPaidExpenses ?? [])
       .filter((item) => monthKey(new Date(item.timestamp)) === mk)
-      .reduce((sum, item) => sum + item.amount, 0);
+      .reduce((sum, item) => sum + (item.originalAmount ?? item.amount), 0);
     const month = expenses.filter((e) =>
       e.timestamp.startsWith(mk) || monthKey(new Date(e.timestamp)) === mk);
     const personalShareFor = (expenseId: string, fallback: number) => {
+      if ((finance.friendPaidExpenses ?? []).some((item) => item.expenseId === expenseId)) return fallback;
       const linkedLoans = finance.loans.filter((loan) => loan.expenseId === expenseId);
       const friendShare = linkedLoans.reduce((sum, loan) => sum + loan.amount, 0);
       return linkedLoans.length ? Math.max(0, fallback - friendShare) : fallback;

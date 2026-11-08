@@ -15,6 +15,7 @@ export interface FriendPaidExpense {
   expenseId: string;
   friend: string;
   amount: number;
+  originalAmount?: number;
   timestamp: string;
   repaid?: number;
   repayments?: { amount: number; timestamp: string }[];

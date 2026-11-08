@@ -1,5 +1,6 @@
 import { ID, account } from "../appwrite/client";
 import type { FinanceData, FriendPaidExpense, Loan } from "../../types";
+import { mutateJSON } from "./prefs";
 
 const PREF_KEY = "finance";
 const emptyFinance: FinanceData = { salary: 0, loans: [], friendPaidExpenses: [] };
@@ -20,16 +21,18 @@ export async function getFinance(): Promise<FinanceData> {
 }
 
 async function saveFinance(finance: FinanceData) {
-  const prefs = await account.getPrefs();
-  await account.updatePrefs({ ...prefs, [PREF_KEY]: JSON.stringify(finance) });
+  await mutateJSON<FinanceData>(PREF_KEY, () => finance, emptyFinance);
 }
 
 export async function saveSalary(salary: number) {
+  if (!Number.isFinite(salary) || salary < 0) throw new Error("Salary must be zero or greater.");
   const finance = await getFinance();
   await saveFinance({ ...finance, salary });
 }
 
 export async function addLoan(loan: Omit<Loan, "id" | "repaid">) {
+  if (!Number.isFinite(loan.amount) || loan.amount <= 0) throw new Error("Enter an amount greater than zero.");
+  if (!normalizeFriendName(loan.friend)) throw new Error("Enter a friend name.");
   const finance = await getFinance();
   const newLoan: Loan = { ...loan, friend: normalizeFriendName(loan.friend), id: ID.unique(), repaid: 0 };
   await saveFinance({ ...finance, loans: [newLoan, ...finance.loans] });
@@ -53,6 +56,8 @@ export async function updateLoanRepaid(id: string, repaid: number) {
 }
 
 export async function addFriendPaidExpense(expense: FriendPaidExpense) {
+  if (!Number.isFinite(expense.amount) || expense.amount <= 0) throw new Error("The friend's paid share must be greater than zero.");
+  if (!normalizeFriendName(expense.friend)) throw new Error("Enter a friend name.");
   const finance = await getFinance();
   await saveFinance({
     ...finance,
@@ -82,43 +87,53 @@ export async function updateFriendPaidRepaid(expenseId: string, repaid: number) 
 
 export async function recordFriendSettlement(friendName: string, direction: "to_friend" | "from_friend", amount: number) {
   if (!Number.isFinite(amount) || amount <= 0) throw new Error("Enter an amount greater than zero.");
-  const finance = await getFinance();
   const key = friendNameKey(friendName);
   const timestamp = new Date().toISOString();
-  let remaining = amount;
-
-  if (direction === "to_friend") {
-    const debts = finance.friendPaidExpenses ?? [];
-    const updated = debts.map((debt) => {
-      if (!remaining || friendNameKey(debt.friend) !== key) return debt;
-      const due = Math.max(debt.amount - (debt.repaid ?? 0), 0);
-      const applied = Math.min(due, remaining);
-      if (applied <= 0) return debt;
-      remaining -= applied;
-      const repaid = (debt.repaid ?? 0) + applied;
+  await mutateJSON<FinanceData>(PREF_KEY, (finance) => {
+    const totalDue = direction === "to_friend"
+      ? (finance.friendPaidExpenses ?? []).reduce((sum, debt) =>
+        friendNameKey(debt.friend) === key ? sum + Math.max(debt.amount - (debt.repaid ?? 0), 0) : sum, 0)
+      : finance.loans.reduce((sum, loan) =>
+        friendNameKey(loan.friend) === key ? sum + Math.max(loan.amount - loan.repaid, 0) : sum, 0);
+    if (amount > totalDue + 0.000001) {
+      throw new Error(`Settlement cannot exceed the amount due (${amount.toFixed(2)} requested; ${totalDue.toFixed(2)} due).`);
+    }
+    let remaining = amount;
+    if (direction === "to_friend") {
       return {
-        ...debt,
-        repaid,
-        repayments: [...(debt.repayments ?? []), { amount: applied, timestamp }],
+        ...finance,
+        friendPaidExpenses: (finance.friendPaidExpenses ?? []).map((debt) => {
+          if (!remaining || friendNameKey(debt.friend) !== key) return debt;
+          const due = Math.max(debt.amount - (debt.repaid ?? 0), 0);
+          const applied = Math.min(due, remaining);
+          if (applied <= 0) return debt;
+          remaining -= applied;
+          const repaid = (debt.repaid ?? 0) + applied;
+          return {
+            ...debt,
+            repaid,
+            repayments: [...(debt.repayments ?? []), { amount: applied, timestamp }],
+          };
+        }),
       };
-    });
-    await saveFinance({ ...finance, friendPaidExpenses: updated });
-  } else {
-    const updatedLoans = finance.loans.map((loan) => {
-      if (!remaining || friendNameKey(loan.friend) !== key) return loan;
-      const due = Math.max(loan.amount - loan.repaid, 0);
-      const applied = Math.min(due, remaining);
-      if (applied <= 0) return loan;
-      remaining -= applied;
-      const repaid = loan.repaid + applied;
-      return {
-        ...loan,
-        repaid,
-        repayments: [...(loan.repayments ?? []), { amount: applied, timestamp }],
-      };
-    });
-    await saveFinance({ ...finance, loans: updatedLoans });
-  }
+    }
+    return {
+      ...finance,
+      loans: finance.loans.map((loan) => {
+        if (!remaining || friendNameKey(loan.friend) !== key) return loan;
+        const due = Math.max(loan.amount - loan.repaid, 0);
+        const applied = Math.min(due, remaining);
+        if (applied <= 0) return loan;
+        remaining -= applied;
+        const repaid = loan.repaid + applied;
+        return {
+          ...loan,
+          repaid,
+          repayments: [...(loan.repayments ?? []), { amount: applied, timestamp }],
+        };
+      }),
+    };
+  }, emptyFinance);
 }
 
 export async function removeExpenseFinanceData(expenseIds: string[]) {
@@ -129,6 +144,30 @@ export async function removeExpenseFinanceData(expenseIds: string[]) {
     friendPaidExpenses: (finance.friendPaidExpenses ?? []).filter((item) => !removed.has(item.expenseId)),
     loans: finance.loans.filter((loan) => !loan.expenseId || !removed.has(loan.expenseId)),
   });
+}
+
+export async function replaceExpenseFinanceData(
+  expenseId: string,
+  friendPaid: FriendPaidExpense | null,
+  loans: Array<Omit<Loan, "id" | "repaid">>,
+) {
+  await mutateJSON<FinanceData>(PREF_KEY, (finance) => ({
+    ...finance,
+    friendPaidExpenses: [
+      ...(finance.friendPaidExpenses ?? []).filter((item) => item.expenseId !== expenseId),
+      ...(friendPaid ? [{ ...friendPaid, friend: normalizeFriendName(friendPaid.friend), repaid: 0, repayments: [] }] : []),
+    ],
+    loans: [
+      ...finance.loans.filter((loan) => loan.expenseId !== expenseId),
+      ...loans.map((loan) => ({
+        ...loan,
+        friend: normalizeFriendName(loan.friend),
+        id: ID.unique(),
+        repaid: 0,
+        repayments: [],
+      })),
+    ],
+  }), emptyFinance);
 }
 
 export function normalizeFriendName(name: string) {

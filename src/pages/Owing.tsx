@@ -4,18 +4,46 @@ import { toast } from "sonner";
 import { useData } from "../lib/hooks";
 import { money } from "../lib/utils";
 import { friendNameKey, normalizeFriendName, recordFriendSettlement } from "../lib/services/finance";
+import { addExpense, deleteExpense } from "../lib/services/expenses";
+import { addCategory, listCategories } from "../lib/services/categories";
 import LendingForm from "../components/forms/LendingForm";
 
 export default function Owing() {
-  const { uid, finance, loading } = useData();
+  const { uid, categories, finance, loading } = useData();
   const qc = useQueryClient();
   const [showForm, setShowForm] = useState(false);
   const [settlementAmounts, setSettlementAmounts] = useState<Record<string, string>>({});
   const settlementMutation = useMutation({
-    mutationFn: ({ friend, direction, amount }: { friend: string; direction: "to_friend" | "from_friend"; amount: number }) =>
-      recordFriendSettlement(friend, direction, amount),
+    mutationFn: async ({ friend, direction, amount }: { friend: string; direction: "to_friend" | "from_friend"; amount: number }) => {
+      let settlementExpenseId: string | null = null;
+      if (direction === "to_friend") {
+        const existingCategories = categories.length ? categories : await listCategories(uid);
+        let category = existingCategories.find((item) => item.name.toLocaleLowerCase() === "settlements");
+        if (!category) {
+          await addCategory(uid, "Settlements", "#f59e0b");
+          const refreshed = await listCategories(uid);
+          category = refreshed.find((item) => item.name.toLocaleLowerCase() === "settlements");
+        }
+        if (!category) throw new Error("Could not create the Settlements category.");
+        const created = await addExpense(uid, {
+          amount,
+          categoryId: category.$id,
+          note: `Settlement paid to ${normalizeFriendName(friend)}`,
+          timestamp: new Date().toISOString(),
+        });
+        settlementExpenseId = created.$id;
+      }
+      try {
+        await recordFriendSettlement(friend, direction, amount);
+      } catch (error) {
+        if (settlementExpenseId) await Promise.allSettled([deleteExpense(settlementExpenseId)]);
+        throw error;
+      }
+    },
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["finance", uid] });
+      qc.invalidateQueries({ queryKey: ["expenses"] });
+      qc.invalidateQueries({ queryKey: ["categories"] });
       toast.success("Settlement updated");
     },
     onError: (error: Error) => toast.error(error.message),
@@ -89,18 +117,28 @@ export default function Owing() {
                           value={settlementAmounts[key] ?? ""} placeholder="Enter amount paid"
                           onChange={(event) => setSettlementAmounts({ ...settlementAmounts, [key]: event.target.value })} />
                       </label>
-                      <button className="btn-ghost disabled:opacity-40"
-                        disabled={settlementMutation.isPending || amount <= 0}
-                        onClick={() => settlementMutation.mutate(
-                          { friend: balance.name, direction: "to_friend", amount },
-                          { onSuccess: () => setSettlementAmounts({ ...settlementAmounts, [key]: "" }) },
-                        )}>I paid</button>
-                      <button className="btn disabled:opacity-40"
-                        disabled={settlementMutation.isPending || amount <= 0}
-                        onClick={() => settlementMutation.mutate(
-                          { friend: balance.name, direction: "from_friend", amount },
-                          { onSuccess: () => setSettlementAmounts({ ...settlementAmounts, [key]: "" }) },
-                        )}>Friend paid</button>
+                      {net < 0 && (
+                        <button className="btn-ghost disabled:opacity-40"
+                          disabled={settlementMutation.isPending || amount <= 0 || amount > Math.abs(net)}
+                          onClick={() => {
+                            if (!window.confirm(`Confirm that you paid ${balance.name} ${money(amount)}?`)) return;
+                            settlementMutation.mutate(
+                              { friend: balance.name, direction: "to_friend", amount },
+                              { onSuccess: () => setSettlementAmounts({ ...settlementAmounts, [key]: "" }) },
+                            );
+                          }}>I paid</button>
+                      )}
+                      {net > 0 && (
+                        <button className="btn disabled:opacity-40"
+                          disabled={settlementMutation.isPending || amount <= 0 || amount > net}
+                          onClick={() => {
+                            if (!window.confirm(`Confirm that ${balance.name} paid you ${money(amount)}?`)) return;
+                            settlementMutation.mutate(
+                              { friend: balance.name, direction: "from_friend", amount },
+                              { onSuccess: () => setSettlementAmounts({ ...settlementAmounts, [key]: "" }) },
+                            );
+                          }}>Friend paid</button>
+                      )}
                     </div>
                   )}
                 </div>

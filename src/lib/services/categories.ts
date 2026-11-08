@@ -43,6 +43,10 @@ export async function listCategories(uid: string): Promise<Category[]> {
 }
 export async function addCategory(uid: string, name: string, color: string) {
   const cats = await listCategories(uid);
+  if (!name.trim()) throw new Error("Enter a category name.");
+  if (cats.some((category) => category.name.trim().toLocaleLowerCase() === name.trim().toLocaleLowerCase())) {
+    throw new Error("A category with this name already exists.");
+  }
   const distinctColor = nextCategoryColor(cats, color);
   await setJSON("categories", [...cats, { $id: ID.unique(), userId: uid, name, color: distinctColor, isDefault: false }]);
 }

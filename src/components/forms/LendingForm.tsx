@@ -5,6 +5,7 @@ import Modal from "../Modal";
 import { useData } from "../../lib/hooks";
 import { addLoan } from "../../lib/services/finance";
 import { normalizeFriendName } from "../../lib/services/finance";
+import { money } from "../../lib/utils";
 
 export default function LendingForm({ onClose }: { onClose: () => void }) {
   const { uid, finance } = useData();
@@ -27,7 +28,7 @@ export default function LendingForm({ onClose }: { onClose: () => void }) {
     },
     onError: (error: Error) => toast.error(error.message),
   });
-  const valid = friend.trim().length > 0 && Number(amount) > 0;
+  const valid = friend.trim().length > 0 && Number.isFinite(Number(amount)) && Number(amount) > 0;
   const friendSuggestions = [...new Set([
     ...finance.loans.map((loan) => normalizeFriendName(loan.friend)),
     ...(finance.friendPaidExpenses ?? []).map((debt) => normalizeFriendName(debt.friend)),
@@ -35,7 +36,10 @@ export default function LendingForm({ onClose }: { onClose: () => void }) {
 
   return (
     <Modal title="Lend money" onClose={onClose}>
-      <form className="space-y-3" onSubmit={(event) => { event.preventDefault(); if (valid) mutation.mutate(); }}>
+      <form className="space-y-3" onSubmit={(event) => {
+        event.preventDefault();
+        if (valid && window.confirm(`Record a lending of ${money(Number(amount))} to ${normalizeFriendName(friend)}?`)) mutation.mutate();
+      }}>
         <datalist id="lending-friend-suggestions">
           {friendSuggestions.map((suggestion) => <option key={suggestion} value={suggestion} />)}
         </datalist>

@@ -29,6 +29,7 @@ export default function Expenses() {
   const previousMonthLabel = previousMonth.toLocaleDateString("en-US", { month: "long", year: "numeric" });
   const cat = (id: string) => categories.find((category) => category.$id === id);
   const personalAmount = (expense: typeof expenses[number]) => {
+    if (finance.friendPaidExpenses?.some((item) => item.expenseId === expense.$id)) return expense.amount;
     const sharedLoans = finance.loans.filter((loan) => loan.expenseId === expense.$id);
     if (sharedLoans.length) {
       const friendShare = sharedLoans.reduce((sum, loan) => sum + loan.amount, 0);

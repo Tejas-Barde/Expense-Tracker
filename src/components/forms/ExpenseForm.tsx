@@ -3,9 +3,10 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import Modal from "../Modal";
 import { useData } from "../../lib/hooks";
-import { addExpense, updateExpense } from "../../lib/services/expenses";
-import { addFriendPaidExpense, addLoan, normalizeFriendName, removeExpenseFinanceData } from "../../lib/services/finance";
+import { addExpense, deleteExpense, updateExpense } from "../../lib/services/expenses";
+import { normalizeFriendName, removeExpenseFinanceData, replaceExpenseFinanceData } from "../../lib/services/finance";
 import { addExpenseToTrip, createTrip, listTrips, moveExpenseToTrip } from "../../lib/services/trips";
+import { removeExpensesFromTrips } from "../../lib/services/trips";
 import type { Expense, Trip } from "../../types";
 import { money } from "../../lib/utils";
 export default function ExpenseForm({ onClose, expense }: { onClose: () => void; expense?: Expense }) {
@@ -54,54 +55,73 @@ export default function ExpenseForm({ onClose, expense }: { onClose: () => void;
     mutationFn: async () => {
       const timestamp = dt ? new Date(dt).toISOString() : new Date().toISOString();
       const expenseAmount = parseFloat(amount);
+      if (!Number.isFinite(expenseAmount) || expenseAmount <= 0) throw new Error("Enter an amount greater than zero.");
+      if (!Number.isFinite(new Date(timestamp).getTime())) throw new Error("Enter a valid transaction date.");
       const created = expense
         ? await updateExpense(expense.$id, { amount: expenseAmount, categoryId, note, timestamp })
         : await addExpense(uid, { amount: expenseAmount, categoryId, note, timestamp });
-      let selectedTripId = tripId;
-      if (newTripName.trim()) {
-        const trip = await createTrip(uid, newTripName);
-        selectedTripId = trip.id;
-        setTrips((current) => [...current, trip]);
-      }
       const expenseId = expense?.$id ?? created.$id;
-      if (expense) await moveExpenseToTrip(expenseId, selectedTripId);
-      else if (selectedTripId) await addExpenseToTrip(selectedTripId, expenseId);
-      if (expense) await removeExpenseFinanceData([expenseId]);
-      if (paymentMode === "friend_paid") {
-        const friendCount = Math.max(1, splitFriends.length + 1);
-        const yourShare = splitMode === "equal"
-          ? expenseAmount / friendCount
-          : splitFriends.reduce((sum, person) => sum + parseFloat(person.share || "0"), 0) >= 0
-            ? Math.max(0, expenseAmount - splitFriends.reduce((sum, person) => sum + parseFloat(person.share || "0"), 0))
-            : 0;
-        await addFriendPaidExpense({
-          expenseId,
-          friend: normalizeFriendName(friendName),
-          amount: yourShare,
-          timestamp,
-        });
-      }
-      if (paymentMode === "paid_for_friend") {
+      try {
+        let selectedTripId = tripId;
+        if (newTripName.trim()) {
+          const trip = await createTrip(uid, newTripName);
+          selectedTripId = trip.id;
+          setTrips((current) => [...current, trip]);
+        }
         const uniqueFriends = new Map<string, number>();
-        splitFriends.forEach((person) => {
-          const name = normalizeFriendName(person.name);
-          if (!name) return;
-          const key = name.toLocaleLowerCase();
-          const share = splitMode === "equal"
-            ? expenseAmount / (splitFriends.length + 1)
-            : parseFloat(person.share || "0");
-          uniqueFriends.set(key, (uniqueFriends.get(key) ?? 0) + share);
-        });
-        for (const [key, share] of uniqueFriends) {
-          const person = splitFriends.find((item) => normalizeFriendName(item.name).toLocaleLowerCase() === key);
-          await addLoan({
-            friend: person ? normalizeFriendName(person.name) : key,
-            amount: share,
-            note: note.trim() || "Paid through an expense",
-            timestamp,
+        let friendPaid: { expenseId: string; friend: string; amount: number; originalAmount: number; timestamp: string } | null = null;
+        if (paymentMode === "friend_paid") {
+          const friendCount = Math.max(1, splitFriends.length + 1);
+          const enteredShares = splitFriends.reduce((sum, person) => sum + parseFloat(person.share || "0"), 0);
+          const yourShare = splitMode === "equal"
+            ? expenseAmount / friendCount
+            : Math.max(0, expenseAmount - enteredShares);
+          friendPaid = {
             expenseId,
+            friend: normalizeFriendName(friendName),
+            amount: yourShare,
+            originalAmount: expenseAmount,
+            timestamp,
+          };
+        }
+        if (paymentMode === "paid_for_friend") {
+          splitFriends.forEach((person) => {
+            const name = normalizeFriendName(person.name);
+            if (!name) return;
+            const key = name.toLocaleLowerCase();
+            const share = splitMode === "equal"
+              ? expenseAmount / (splitFriends.length + 1)
+              : parseFloat(person.share || "0");
+            uniqueFriends.set(key, (uniqueFriends.get(key) ?? 0) + share);
           });
         }
+        await replaceExpenseFinanceData(
+          expenseId,
+          friendPaid,
+          [...uniqueFriends].map(([key, share]) => {
+            const person = splitFriends.find((item) => normalizeFriendName(item.name).toLocaleLowerCase() === key);
+            return {
+              friend: person ? normalizeFriendName(person.name) : key,
+              amount: share,
+              note: note.trim() || "Paid through an expense",
+              timestamp,
+              expenseId,
+            };
+          }),
+        );
+        if (expense) await moveExpenseToTrip(expenseId, selectedTripId);
+        else if (selectedTripId) await addExpenseToTrip(selectedTripId, expenseId);
+      } catch (error) {
+        if (!expense) {
+          await Promise.allSettled([deleteExpense(expenseId), removeExpenseFinanceData([expenseId]), removeExpensesFromTrips([expenseId])]);
+        } else {
+          await Promise.allSettled([
+            updateExpense(expense.$id, { amount: expense.amount, categoryId: expense.categoryId, note: expense.note, timestamp: expense.timestamp }),
+            moveExpenseToTrip(expense.$id, trips.find((trip) => trip.expenseIds.includes(expense.$id))?.id ?? ""),
+            removeExpenseFinanceData([expense.$id]),
+          ]);
+        }
+        throw error;
       }
     },
     onSuccess: () => {
@@ -116,12 +136,17 @@ export default function ExpenseForm({ onClose, expense }: { onClose: () => void;
   const expenseAmount = parseFloat(amount);
   const shareAmount = parseFloat(friendShare);
   const exactShares = splitFriends.reduce((sum, person) => sum + parseFloat(person.share || "0"), 0);
-  const hasValidFriends = splitFriends.length === 0 || splitFriends.every((person) => normalizeFriendName(person.name).length > 0);
+  const normalizedFriendNames = splitFriends.map((person) => normalizeFriendName(person.name).toLocaleLowerCase()).filter(Boolean);
+  const hasValidFriends = splitFriends.length === 0 || (
+    splitFriends.every((person) => normalizeFriendName(person.name).length > 0)
+    && new Set(normalizedFriendNames).size === normalizedFriendNames.length
+  );
   const splitValid = splitMode === "equal"
     ? paymentMode === "friend_paid"
       ? hasValidFriends
       : splitFriends.length > 0 && hasValidFriends
-    : splitFriends.length > 0 && exactShares > 0 && exactShares <= expenseAmount && hasValidFriends;
+    : splitFriends.length > 0 && exactShares > 0 && hasValidFriends
+      && (paymentMode === "friend_paid" ? exactShares < expenseAmount : exactShares <= expenseAmount);
   const friendSuggestions = [...new Set([
     ...finance.loans.map((loan) => normalizeFriendName(loan.friend)),
     ...(finance.friendPaidExpenses ?? []).map((debt) => normalizeFriendName(debt.friend)),

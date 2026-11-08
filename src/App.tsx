@@ -26,7 +26,8 @@ function Layout() {
         <NavLink to="/" end className={link}>Dashboard</NavLink><NavLink to="/history" className={link}>History</NavLink><NavLink to="/owing" className={link}>Owing</NavLink><NavLink to="/trips" className={link}>Trips</NavLink>
         <button className="btn-ghost mt-4" onClick={() => setModal("budget")}>Budget</button>
         <button className="btn-ghost" onClick={() => setModal("category")}>New category</button>
-        <button className="mt-auto text-mute text-sm text-left" onClick={logout}>Log out ({user.name})</button>
+        <button className="mt-auto text-mute text-sm text-left"
+          onClick={() => { if (window.confirm("Log out of Ledgerly?")) void logout(); }}>Log out ({user.name})</button>
       </aside>
       <main className="mx-auto min-w-0 w-full max-w-5xl flex-1 px-4 pt-4 pb-[calc(6rem+env(safe-area-inset-bottom))] md:p-8 md:pb-8">
         <div className="flex flex-wrap justify-between items-center gap-3 mb-5">
@@ -42,7 +43,8 @@ function Layout() {
         <NavLink to="/trips" className={mobileLink}>Trips</NavLink>
         <button className="min-w-0 min-h-11 px-1 py-2 text-mute" onClick={() => setModal("budget")}>Budget</button>
         <button className="min-w-0 min-h-11 px-1 py-2 text-mute" onClick={() => setModal("category")}>Category</button>
-        <button className="min-w-0 min-h-11 px-1 py-2 text-mute" onClick={logout}>Log out</button>
+        <button className="min-w-0 min-h-11 px-1 py-2 text-mute"
+          onClick={() => { if (window.confirm("Log out of Ledgerly?")) void logout(); }}>Log out</button>
       </nav>
       {modal === "expense" && <ExpenseForm onClose={() => setModal(null)} />}
       {modal === "budget" && <BudgetForm onClose={() => setModal(null)} />}
