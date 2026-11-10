@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useData } from "../lib/hooks";
 import { money } from "../lib/utils";
-import { friendNameKey, normalizeFriendName, recordFriendSettlement } from "../lib/services/finance";
+import { deleteBorrowing, deleteLoan, friendNameKey, normalizeFriendName, recordFriendSettlement } from "../lib/services/finance";
 import { addExpense, deleteExpense } from "../lib/services/expenses";
 import { addCategory, listCategories } from "../lib/services/categories";
 import LendingForm from "../components/forms/LendingForm";
@@ -16,25 +16,26 @@ export default function Owing() {
   const settlementMutation = useMutation({
     mutationFn: async ({ friend, direction, amount }: { friend: string; direction: "to_friend" | "from_friend"; amount: number }) => {
       let settlementExpenseId: string | null = null;
-      if (direction === "to_friend") {
-        const existingCategories = categories.length ? categories : await listCategories(uid);
-        let category = existingCategories.find((item) => item.name.toLocaleLowerCase() === "settlements");
-        if (!category) {
-          await addCategory(uid, "Settlements", "#f59e0b");
-          const refreshed = await listCategories(uid);
-          category = refreshed.find((item) => item.name.toLocaleLowerCase() === "settlements");
-        }
-        if (!category) throw new Error("Could not create the Settlements category.");
-        const created = await addExpense(uid, {
-          amount,
-          categoryId: category.$id,
-          note: `Settlement paid to ${normalizeFriendName(friend)}`,
-          timestamp: new Date().toISOString(),
-        });
-        settlementExpenseId = created.$id;
+      const existingCategories = categories.length ? categories : await listCategories(uid);
+      let category = existingCategories.find((item) => item.name.toLocaleLowerCase() === "settlements");
+      if (!category) {
+        await addCategory(uid, "Settlements", "#f59e0b");
+        const refreshed = await listCategories(uid);
+        category = refreshed.find((item) => item.name.toLocaleLowerCase() === "settlements");
       }
+      if (!category) throw new Error("Could not create the Settlements category.");
+      const normalizedFriend = normalizeFriendName(friend);
+      const created = await addExpense(uid, {
+        amount,
+        categoryId: category.$id,
+        note: direction === "to_friend"
+          ? `Settlement paid to ${normalizedFriend}`
+          : `Settlement received from ${normalizedFriend}`,
+        timestamp: new Date().toISOString(),
+      });
+      settlementExpenseId = created.$id;
       try {
-        await recordFriendSettlement(friend, direction, amount);
+        await recordFriendSettlement(friend, direction, amount, settlementExpenseId);
       } catch (error) {
         if (settlementExpenseId) await Promise.allSettled([deleteExpense(settlementExpenseId)]);
         throw error;
@@ -52,7 +53,12 @@ export default function Owing() {
   const totalRepaid = finance.loans.reduce((sum, loan) => sum + loan.repaid, 0);
   const outstanding = totalLent - totalRepaid;
   const debtsToFriends = finance.friendPaidExpenses ?? [];
+  const borrowings = finance.borrowings ?? [];
   const totalOwedToFriends = debtsToFriends.reduce((sum, debt) => sum + Math.max(debt.amount - (debt.repaid ?? 0), 0), 0);
+  const totalBorrowed = borrowings.reduce((sum, borrowing) => sum + borrowing.amount, 0);
+  const borrowedOutstanding = borrowings.reduce((sum, borrowing) =>
+    sum + Math.max(borrowing.amount - borrowing.repaid, 0), 0);
+  const totalPayable = totalOwedToFriends + borrowedOutstanding;
   const balances = new Map<string, { name: string; theyOweYou: number; youOweThem: number }>();
   finance.loans.forEach((loan) => {
     const name = normalizeFriendName(loan.friend);
@@ -70,6 +76,14 @@ export default function Owing() {
     current.youOweThem += Math.max(debt.amount - (debt.repaid ?? 0), 0);
     balances.set(key, current);
   });
+  borrowings.forEach((borrowing) => {
+    const name = normalizeFriendName(borrowing.lender);
+    if (!name) return;
+    const key = friendNameKey(name);
+    const current = balances.get(key) ?? { name, theyOweYou: 0, youOweThem: 0 };
+    current.youOweThem += Math.max(borrowing.amount - borrowing.repaid, 0);
+    balances.set(key, current);
+  });
   const netBalance = [...balances.values()].reduce((sum, balance) =>
     sum + balance.theyOweYou - balance.youOweThem, 0);
 
@@ -77,26 +91,28 @@ export default function Owing() {
   return (
     <div className="min-w-0 space-y-4">
       <header className="flex items-center justify-between gap-3">
-        <div><h2 className="text-xl font-bold">Owing</h2><p className="text-sm text-mute">Track money friends owe you and money you owe friends.</p></div>
-        <button className="btn shrink-0" onClick={() => setShowForm(true)}>Lend money</button>
+        <div><h2 className="text-xl font-bold">Balances</h2><p className="text-sm text-mute">Track outstanding amounts with other people.</p></div>
+        <button className="btn shrink-0" onClick={() => setShowForm(true)}>Record money</button>
       </header>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         <Summary title="Total lent" amount={totalLent} />
-        <Summary title="Paid back" amount={totalRepaid} />
-        <Summary title="Still owed" amount={outstanding} prominent />
-        <Summary title="You owe friends" amount={totalOwedToFriends} />
+        <Summary title="Repaid to you" amount={totalRepaid} />
+        <Summary title="Receivable" amount={outstanding} prominent />
+        <Summary title="Total borrowed" amount={totalBorrowed} />
+        <Summary title="Borrowing outstanding" amount={borrowedOutstanding} negative={borrowedOutstanding > 0} />
+        <Summary title="You owe others" amount={totalPayable} negative={totalPayable > 0} />
         <Summary
           title="Net settlement"
           amount={Math.abs(netBalance)}
           prominent={netBalance !== 0}
-          suffix={netBalance > 0 ? "owed to you" : netBalance < 0 ? "you owe" : "settled up"}
+          suffix={netBalance > 0 ? "owed to you" : netBalance < 0 ? "you owe" : "settled"}
           negative={netBalance < 0}
         />
       </div>
       {balances.size > 0 && (
         <section className="rounded-xl border border-line bg-panel p-4">
           <h3 className="font-semibold">Overall balances</h3>
-          <p className="mb-3 text-xs text-mute">Balances are combined by friend name.</p>
+          <p className="mb-3 text-xs text-mute">Net settlement is shown by person, with gross amounts listed below.</p>
           <div className="space-y-2">
             {[...balances.values()].map((balance) => {
               const net = balance.theyOweYou - balance.youOweThem;
@@ -110,6 +126,12 @@ export default function Owing() {
                       {net > 0 ? `${money(net)} is owed to you` : net < 0 ? `You owe ${money(Math.abs(net))}` : "Settled up"}
                     </span>
                   </div>
+                  {(balance.youOweThem > 0 || balance.theyOweYou > 0) && (
+                    <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                      {balance.youOweThem > 0 && <span className="text-red-300">You owe: {money(balance.youOweThem)}</span>}
+                      {balance.theyOweYou > 0 && <span className="text-emerald-400">Owed to you: {money(balance.theyOweYou)}</span>}
+                    </div>
+                  )}
                   {net !== 0 && (
                     <div className="mt-3 flex flex-wrap items-end gap-2">
                       <label className="min-w-0 flex-1 text-xs text-mute">Settlement amount
@@ -126,7 +148,7 @@ export default function Owing() {
                               { friend: balance.name, direction: "to_friend", amount },
                               { onSuccess: () => setSettlementAmounts({ ...settlementAmounts, [key]: "" }) },
                             );
-                          }}>I paid</button>
+                          }}>You paid</button>
                       )}
                       {net > 0 && (
                         <button className="btn disabled:opacity-40"
@@ -137,7 +159,7 @@ export default function Owing() {
                               { friend: balance.name, direction: "from_friend", amount },
                               { onSuccess: () => setSettlementAmounts({ ...settlementAmounts, [key]: "" }) },
                             );
-                          }}>Friend paid</button>
+                          }}>Payment received</button>
                       )}
                     </div>
                   )}
@@ -150,25 +172,65 @@ export default function Owing() {
       {debtsToFriends.length > 0 && (
         <section className="space-y-3">
           <div>
-            <h3 className="font-semibold">Money you owe friends</h3>
-            <p className="text-xs text-mute">Expenses paid by friends for you</p>
+            <h3 className="font-semibold">Payments you owe</h3>
+            <p className="text-xs text-mute">Transactions paid by someone else on your behalf</p>
           </div>
           {debtsToFriends.map((debt) => {
             const due = Math.max(debt.amount - (debt.repaid ?? 0), 0);
             return (
               <article key={debt.expenseId} className="rounded-xl border border-line bg-panel p-4">
                 <div className="flex items-start justify-between gap-3">
-                  <div><h4 className="font-semibold">{debt.friend || "Friend"}</h4><p className="text-xs text-mute">{new Date(debt.timestamp).toLocaleDateString()}</p></div>
-                  <div className="text-right"><p className="font-semibold">{money(debt.amount)} borrowed</p><p className="text-sm text-red-300">{money(due)} you owe</p></div>
+                  <div><h4 className="font-semibold">{debt.friend || "Other person"}</h4><p className="text-xs text-mute">{new Date(debt.timestamp).toLocaleDateString()}</p></div>
+                  <div className="text-right"><p className="font-semibold">{money(debt.amount)} total</p><p className="text-sm text-red-300">{money(due)} outstanding</p></div>
                 </div>
               </article>
             );
           })}
         </section>
       )}
-      {!finance.loans.length && <section className="rounded-xl border border-line bg-panel p-6 text-center">
-        <p className="font-semibold">No lending entries yet</p>
-        <p className="mt-1 text-sm text-mute">Add money you lend to a friend to track it separately from everyday spending.</p>
+      {borrowings.length > 0 && (
+        <section className="space-y-3">
+          <div>
+            <h3 className="font-semibold">Money borrowed</h3>
+            <p className="text-xs text-mute">Outstanding obligations to lenders</p>
+          </div>
+          {borrowings.map((borrowing) => {
+            const due = Math.max(borrowing.amount - borrowing.repaid, 0);
+            return (
+              <article key={borrowing.id} className="rounded-xl border border-line bg-panel p-4">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <h4 className="font-semibold">{borrowing.lender}</h4>
+                    <p className="text-xs text-mute">
+                      {new Date(borrowing.timestamp).toLocaleDateString()}{borrowing.note ? ` · ${borrowing.note}` : ""}
+                    </p>
+                  </div>
+                  <div className="flex items-start gap-2 text-right">
+                    <div>
+                      <p className="font-semibold">{money(borrowing.amount)} borrowed</p>
+                      <p className="text-sm text-red-300">{money(due)} outstanding</p>
+                    </div>
+                    <button type="button" className="grid size-11 place-items-center rounded-lg text-mute hover:bg-red-500/10 hover:text-red-400"
+                      aria-label={`Delete borrowing from ${borrowing.lender}`} onClick={async () => {
+                        if (!window.confirm(`Delete the borrowing record from ${borrowing.lender}?`)) return;
+                        try {
+                          await deleteBorrowing(borrowing.id);
+                          qc.invalidateQueries({ queryKey: ["finance", uid] });
+                          toast.success("Borrowing deleted");
+                        } catch (error) {
+                          toast.error(error instanceof Error ? error.message : "Could not delete borrowing.");
+                        }
+                      }}>🗑</button>
+                  </div>
+                </div>
+              </article>
+            );
+          })}
+        </section>
+      )}
+      {!finance.loans.length && !debtsToFriends.length && borrowings.length === 0 && <section className="rounded-xl border border-line bg-panel p-6 text-center">
+        <p className="font-semibold">No balances recorded</p>
+        <p className="mt-1 text-sm text-mute">Record money lent, borrowed, or settled to keep balances up to date.</p>
       </section>}
       <div className="space-y-3">
         {finance.loans.map((loan) => {
@@ -177,8 +239,20 @@ export default function Owing() {
             <div className="flex min-w-0 items-start justify-between gap-3">
               <div className="min-w-0"><h3 className="truncate font-semibold">{loan.friend}</h3>
                 <p className="text-xs text-mute">{new Date(loan.timestamp).toLocaleDateString()} {loan.note && `· ${loan.note}`}</p></div>
-              <div className="shrink-0 text-right"><p className="font-semibold">{money(loan.amount)} lent</p>
+              <div className="flex shrink-0 items-start gap-2 text-right"><div><p className="font-semibold">{money(loan.amount)} lent</p>
                 <p className="text-sm text-emerald-400">{money(due)} owed</p></div>
+                <button type="button" className="grid size-11 place-items-center rounded-lg text-mute hover:bg-red-500/10 hover:text-red-400"
+                  aria-label={`Delete loan to ${loan.friend}`} onClick={async () => {
+                    if (!window.confirm(`Delete the loan record to ${loan.friend}?`)) return;
+                    try {
+                      await deleteLoan(loan.id);
+                      qc.invalidateQueries({ queryKey: ["finance", uid] });
+                      toast.success("Loan deleted");
+                    } catch (error) {
+                      toast.error(error instanceof Error ? error.message : "Could not delete loan.");
+                    }
+                  }}>🗑</button>
+              </div>
             </div>
           </section>;
         })}

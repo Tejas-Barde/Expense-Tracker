@@ -4,7 +4,7 @@ import { toast } from "sonner";
 import Modal from "../Modal";
 import { useData } from "../../lib/hooks";
 import { addExpense, deleteExpense, updateExpense } from "../../lib/services/expenses";
-import { normalizeFriendName, removeExpenseFinanceData, replaceExpenseFinanceData } from "../../lib/services/finance";
+import { normalizeFriendName, removeExpenseFinanceData, replaceExpenseFinanceData, restoreFinanceData } from "../../lib/services/finance";
 import { addExpenseToTrip, createTrip, listTrips, moveExpenseToTrip } from "../../lib/services/trips";
 import { removeExpensesFromTrips } from "../../lib/services/trips";
 import type { Expense, Trip } from "../../types";
@@ -12,8 +12,9 @@ import { money } from "../../lib/utils";
 export default function ExpenseForm({ onClose, expense }: { onClose: () => void; expense?: Expense }) {
   const { uid, categories, expenses, finance } = useData(); const qc = useQueryClient();
   const [amount, setAmount] = useState(""); const [categoryId, setCat] = useState(""); const [note, setNote] = useState(""); const [dt, setDt] = useState(""); const [pickerOpen, setPickerOpen] = useState(false);
-  const [paymentMode, setPaymentMode] = useState<"self" | "friend_paid" | "paid_for_friend">("self");
+  const [paymentMode, setPaymentMode] = useState<"self" | "friend_paid" | "paid_for_friend" | "borrowed">("self");
   const [friendName, setFriendName] = useState("");
+  const [borrowedFrom, setBorrowedFrom] = useState("");
   const [friendShare, setFriendShare] = useState("");
   const [trips, setTrips] = useState<Trip[]>([]);
   const [tripId, setTripId] = useState("");
@@ -31,6 +32,7 @@ export default function ExpenseForm({ onClose, expense }: { onClose: () => void;
     setDt(local);
     const friendPaid = finance.friendPaidExpenses?.find((item) => item.expenseId === expense.$id);
     const sharedLoans = finance.loans.filter((loan) => loan.expenseId === expense.$id);
+    const linkedBorrowing = finance.borrowings?.find((item) => item.expenseId === expense.$id);
     if (friendPaid) {
       setPaymentMode("friend_paid");
       setFriendName(friendPaid.friend);
@@ -40,12 +42,15 @@ export default function ExpenseForm({ onClose, expense }: { onClose: () => void;
       setPaymentMode("paid_for_friend");
       setSplitMode("exact");
       setSplitFriends(sharedLoans.map((loan) => ({ name: loan.friend, share: String(loan.amount) })));
+    } else if (linkedBorrowing) {
+      setPaymentMode("borrowed");
+      setBorrowedFrom(linkedBorrowing.lender);
     } else {
       setPaymentMode("self");
       setFriendName("");
       setSplitFriends([]);
     }
-  }, [expense, finance.friendPaidExpenses, finance.loans]);
+  }, [expense, finance.friendPaidExpenses, finance.loans, finance.borrowings]);
   useEffect(() => {
     if (!expense || trips.length === 0) return;
     const existingTrip = trips.find((trip) => trip.expenseIds.includes(expense.$id));
@@ -69,7 +74,7 @@ export default function ExpenseForm({ onClose, expense }: { onClose: () => void;
           setTrips((current) => [...current, trip]);
         }
         const uniqueFriends = new Map<string, number>();
-        let friendPaid: { expenseId: string; friend: string; amount: number; originalAmount: number; timestamp: string } | null = null;
+        let friendPaid: { expenseId: string; friend: string; amount: number; originalAmount: number; personalShare: number; timestamp: string } | null = null;
         if (paymentMode === "friend_paid") {
           const friendCount = Math.max(1, splitFriends.length + 1);
           const enteredShares = splitFriends.reduce((sum, person) => sum + parseFloat(person.share || "0"), 0);
@@ -79,8 +84,9 @@ export default function ExpenseForm({ onClose, expense }: { onClose: () => void;
           friendPaid = {
             expenseId,
             friend: normalizeFriendName(friendName),
-            amount: yourShare,
+            amount: Math.max(0, expenseAmount - yourShare),
             originalAmount: expenseAmount,
+            personalShare: yourShare,
             timestamp,
           };
         }
@@ -95,6 +101,14 @@ export default function ExpenseForm({ onClose, expense }: { onClose: () => void;
             uniqueFriends.set(key, (uniqueFriends.get(key) ?? 0) + share);
           });
         }
+        const borrowing = paymentMode === "borrowed" && normalizeFriendName(borrowedFrom)
+          ? {
+            lender: normalizeFriendName(borrowedFrom),
+            amount: expenseAmount,
+            note: note.trim() || "Paid with borrowed money",
+            timestamp,
+          }
+          : null;
         await replaceExpenseFinanceData(
           expenseId,
           friendPaid,
@@ -108,6 +122,7 @@ export default function ExpenseForm({ onClose, expense }: { onClose: () => void;
               expenseId,
             };
           }),
+          borrowing,
         );
         if (expense) await moveExpenseToTrip(expenseId, selectedTripId);
         else if (selectedTripId) await addExpenseToTrip(selectedTripId, expenseId);
@@ -118,7 +133,7 @@ export default function ExpenseForm({ onClose, expense }: { onClose: () => void;
           await Promise.allSettled([
             updateExpense(expense.$id, { amount: expense.amount, categoryId: expense.categoryId, note: expense.note, timestamp: expense.timestamp }),
             moveExpenseToTrip(expense.$id, trips.find((trip) => trip.expenseIds.includes(expense.$id))?.id ?? ""),
-            removeExpenseFinanceData([expense.$id]),
+            restoreFinanceData(finance),
           ]);
         }
         throw error;
@@ -150,6 +165,7 @@ export default function ExpenseForm({ onClose, expense }: { onClose: () => void;
   const friendSuggestions = [...new Set([
     ...finance.loans.map((loan) => normalizeFriendName(loan.friend)),
     ...(finance.friendPaidExpenses ?? []).map((debt) => normalizeFriendName(debt.friend)),
+    ...(finance.borrowings ?? []).map((borrowing) => normalizeFriendName(borrowing.lender)),
   ].filter(Boolean))].sort((a, b) => a.localeCompare(b));
   const noteSuggestions = [...new Set([
     ...expenses.map((expense) => expense.note.trim()).filter(Boolean),
@@ -157,9 +173,10 @@ export default function ExpenseForm({ onClose, expense }: { onClose: () => void;
   const ok = expenseAmount > 0 && !!categoryId
     && (paymentMode === "self"
       || (paymentMode === "friend_paid" && normalizeFriendName(friendName).length > 0 && splitValid)
-      || (paymentMode === "paid_for_friend" && splitValid));
+      || (paymentMode === "paid_for_friend" && splitValid)
+      || (paymentMode === "borrowed" && normalizeFriendName(borrowedFrom).length > 0));
   return (
-    <Modal title={expense ? "Edit transaction" : "Add expense"} onClose={onClose}>
+    <Modal title={expense ? "Edit transaction" : "New transaction"} onClose={onClose}>
       <div className="space-y-3">
         <datalist id="expense-note-suggestions">
           {noteSuggestions.map((suggestion) => <option key={suggestion} value={suggestion} />)}
@@ -194,12 +211,13 @@ export default function ExpenseForm({ onClose, expense }: { onClose: () => void;
         <label className="block text-sm text-mute">Date & time (leave empty to use right now)
           <input className="input mt-1" type="datetime-local" value={dt} onChange={(e) => setDt(e.target.value)} /></label>
         <fieldset className="space-y-2">
-          <legend className="mb-1 text-sm text-mute">Who paid?</legend>
-          <div className="grid gap-2 sm:grid-cols-3">
+          <legend className="mb-1 text-sm text-mute">Payment source</legend>
+          <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
             {([
-              ["self", "I paid"],
-              ["friend_paid", "Friend paid"],
-              ["paid_for_friend", "I paid for friend"],
+              ["self", "Paid by me"],
+              ["friend_paid", "Paid by someone else"],
+              ["paid_for_friend", "Paid on their behalf"],
+              ["borrowed", "Paid from borrowed money"],
             ] as const).map(([value, label]) => (
               <button key={value} type="button" className={`min-h-11 rounded-lg border px-3 text-sm ${paymentMode === value ? "border-accent bg-accent/10 text-accent" : "border-line bg-ink text-mute"}`}
                 aria-pressed={paymentMode === value} onClick={() => setPaymentMode(value)}>
@@ -208,11 +226,17 @@ export default function ExpenseForm({ onClose, expense }: { onClose: () => void;
             ))}
           </div>
         </fieldset>
-        {paymentMode !== "self" && (
+        {paymentMode === "borrowed" && (
+          <label className="block text-sm text-mute">Borrowed from
+            <input className="input mt-1" list="friend-name-suggestions" value={borrowedFrom}
+              onChange={(event) => setBorrowedFrom(event.target.value)} placeholder="Lender's name" />
+          </label>
+        )}
+        {(paymentMode === "friend_paid" || paymentMode === "paid_for_friend") && (
           <div className="space-y-3 rounded-xl border border-line bg-ink p-3">
             {paymentMode === "friend_paid" && (
-              <label className="block text-sm text-mute">Friend who paid
-                <input className="input mt-1" list="friend-name-suggestions" value={friendName} onChange={(e) => setFriendName(e.target.value)} placeholder="Friend name" /></label>
+              <label className="block text-sm text-mute">Payer
+                <input className="input mt-1" list="friend-name-suggestions" value={friendName} onChange={(e) => setFriendName(e.target.value)} placeholder="Person's name" /></label>
             )}
             <div className="flex gap-2">
               <button type="button" className={`btn-ghost flex-1 ${splitMode === "equal" ? "!bg-accent/10 !text-accent" : ""}`}
@@ -223,19 +247,19 @@ export default function ExpenseForm({ onClose, expense }: { onClose: () => void;
             <div className="space-y-2">
               {splitFriends.map((person, index) => (
                 <div key={index} className="grid grid-cols-[1fr_auto] gap-2 sm:grid-cols-[1fr_8rem_auto]">
-                  <input className="input" list="friend-name-suggestions" value={person.name} placeholder="Friend name" autoComplete="off"
+                  <input className="input" list="friend-name-suggestions" value={person.name} placeholder="Person's name" autoComplete="off"
                     onChange={(event) => setSplitFriends(splitFriends.map((item, itemIndex) => itemIndex === index
                       ? { ...item, name: event.target.value } : item))} />
                   {splitMode === "exact" && <input className="input" type="number" min="0" step="0.01" inputMode="decimal"
                     value={person.share} placeholder="Amount"
                     onChange={(event) => setSplitFriends(splitFriends.map((item, itemIndex) => itemIndex === index
                       ? { ...item, share: event.target.value } : item))} />}
-                  <button type="button" className="min-h-11 min-w-11 text-mute" aria-label={`Remove ${person.name || "friend"}`}
+                  <button type="button" className="min-h-11 min-w-11 text-mute" aria-label={`Remove ${person.name || "person"}`}
                     onClick={() => setSplitFriends(splitFriends.filter((_, itemIndex) => itemIndex !== index))}>✕</button>
                 </div>
               ))}
               <button type="button" className="min-h-11 text-sm text-accent"
-                onClick={() => setSplitFriends([...splitFriends, { name: "", share: "" }])}>+ Add friend</button>
+                onClick={() => setSplitFriends([...splitFriends, { name: "", share: "" }])}>+ Add person</button>
             </div>
             <p className="text-xs text-mute">
               {splitMode === "equal"
@@ -246,10 +270,11 @@ export default function ExpenseForm({ onClose, expense }: { onClose: () => void;
             </p>
           </div>
         )}
-        {paymentMode === "friend_paid" && <p className="text-sm text-amber-300">This expense is excluded from personal spending. Your calculated share is added to what you owe this payer.</p>}
-        {paymentMode === "paid_for_friend" && <p className="text-sm text-emerald-300">Friend names are merged by name. Their shares are added to Owing, while your share increases category spending.</p>}
+        {paymentMode === "friend_paid" && <p className="text-sm text-amber-300">Account cash out is not recorded because someone else paid. Your share is included in personal spending and balances.</p>}
+        {paymentMode === "paid_for_friend" && <p className="text-sm text-emerald-300">Amounts for the same person are combined. Only your share contributes to personal spending.</p>}
+        {paymentMode === "borrowed" && <p className="text-sm text-violet-300">The full amount will be recorded as payable to the lender. It is excluded from actual account cash out until repaid.</p>}
         <button className="btn w-full disabled:opacity-40" disabled={!ok || m.isPending} onClick={() => m.mutate()}>
-          {m.isPending ? "Saving…" : expense ? "Save changes" : "Add expense"}
+          {m.isPending ? "Saving…" : expense ? "Save changes" : "Add transaction"}
         </button>
       </div>
       {pickerOpen && <div className="fixed inset-0 z-[60] flex items-end justify-center bg-black/60 sm:items-center" role="presentation" onClick={() => setPickerOpen(false)}>

@@ -16,8 +16,19 @@ export interface FriendPaidExpense {
   friend: string;
   amount: number;
   originalAmount?: number;
+  personalShare?: number;
   timestamp: string;
   repaid?: number;
+  repayments?: { amount: number; timestamp: string }[];
+}
+export interface Borrowing {
+  id: string;
+  lender: string;
+  amount: number;
+  repaid: number;
+  note: string;
+  timestamp: string;
+  expenseId?: string;
   repayments?: { amount: number; timestamp: string }[];
 }
 export interface Trip {
@@ -30,4 +41,15 @@ export interface FinanceData {
   salary: number;
   loans: Loan[];
   friendPaidExpenses?: FriendPaidExpense[];
+  settlements?: Settlement[];
+  borrowings?: Borrowing[];
+}
+
+export interface Settlement {
+  expenseId?: string;
+  friend: string;
+  direction: "to_friend" | "from_friend";
+  amount: number;
+  timestamp: string;
+  allocations: { targetId: string; amount: number }[];
 }

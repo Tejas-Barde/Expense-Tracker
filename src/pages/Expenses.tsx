@@ -29,12 +29,6 @@ export default function Expenses() {
   const previousMonthLabel = previousMonth.toLocaleDateString("en-US", { month: "long", year: "numeric" });
   const cat = (id: string) => categories.find((category) => category.$id === id);
   const personalAmount = (expense: typeof expenses[number]) => {
-    if (finance.friendPaidExpenses?.some((item) => item.expenseId === expense.$id)) return expense.amount;
-    const sharedLoans = finance.loans.filter((loan) => loan.expenseId === expense.$id);
-    if (sharedLoans.length) {
-      const friendShare = sharedLoans.reduce((sum, loan) => sum + loan.amount, 0);
-      return Math.max(expense.amount - friendShare, 0);
-    }
     return expense.amount;
   };
 
@@ -62,7 +56,13 @@ export default function Expenses() {
     mutationFn: async (ids: string[]) => {
       const results = await Promise.allSettled(ids.map((id) => deleteExpense(id)));
       const deleted = ids.filter((_, index) => results[index].status === "fulfilled");
-      if (deleted.length) await removeExpenseFinanceData(deleted);
+      if (deleted.length) {
+        const deletedExpenses = deleted.flatMap((id) => {
+          const expense = expenses.find((item) => item.$id === id);
+          return expense ? [{ id, amount: expense.amount, note: expense.note }] : [];
+        });
+        await removeExpenseFinanceData(deleted, deletedExpenses);
+      }
       if (deleted.length) await removeExpensesFromTrips(deleted);
       return {
         deleted,
@@ -131,7 +131,7 @@ export default function Expenses() {
   return (
     <div className="min-w-0 space-y-4">
       <header className="flex items-center justify-between gap-3">
-        <div><h2 className="text-xl font-bold">History</h2><p className="text-sm text-mute">Review and search your expenses.</p></div>
+        <div><h2 className="text-xl font-bold">Transactions</h2><p className="text-sm text-mute">Search, review, and manage your activity.</p></div>
         <button type="button" className="btn-ghost shrink-0" aria-pressed={selectionMode}
           onClick={() => selectionMode ? clearSelection() : setSelectionMode(true)}>
           {selectionMode ? "Done" : "Select"}
@@ -204,16 +204,14 @@ export default function Expenses() {
                 <span className="whitespace-nowrap text-xs text-mute">{timeTag(expense.timestamp)}</span>
                 <span className="order-last basis-full truncate text-sm sm:order-none sm:basis-auto sm:flex-1">{expense.note || <span className="text-mute">No note</span>}</span>
                 {friendPaid && <span className="shrink-0 rounded-full bg-red-400/10 px-2 py-1 text-xs text-red-300">
-                  You owe {friendPaid.friend || "friend"} {money(Math.max(friendPaid.amount - (friendPaid.repaid ?? 0), 0))}
+                  You owe {friendPaid.friend || "another person"} {money(Math.max(friendPaid.amount - (friendPaid.repaid ?? 0), 0))}
                 </span>}
                 {sharedLoans.length > 0 && <span className="shrink-0 rounded-full bg-emerald-400/10 px-2 py-1 text-xs text-emerald-300">
-                  Friends owe {money(friendsOwedAmount)}
+                  Receivable {money(friendsOwedAmount)}
                 </span>}
                 {friendOwes && <span className="shrink-0 text-xs text-mute">{money(expense.amount)} total paid</span>}
                 <span className="ml-auto whitespace-nowrap font-semibold">
-                  {sharedLoans.length
-                      ? money(Math.max(expense.amount - sharedLoans.reduce((sum, loan) => sum + loan.amount, 0), 0))
-                      : money(expense.amount)}
+                  {money(personalAmount(expense))}
                 </span>
                 {!selectionMode && (
                   <div className="ml-auto flex shrink-0 gap-1 sm:ml-0">

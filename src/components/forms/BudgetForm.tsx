@@ -27,7 +27,7 @@ export default function BudgetForm({ onClose }: { onClose: () => void }) {
         parseFloat(savings) || 0);
       await saveSalary(parseFloat(salary) || 0);
     },
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ["budget"] }); qc.invalidateQueries({ queryKey: ["finance", uid] }); toast.success("Budget and salary saved"); onClose(); },
+    onSuccess: () => { qc.invalidateQueries({ queryKey: ["budget"] }); qc.invalidateQueries({ queryKey: ["finance", uid] }); toast.success("Budget updated"); onClose(); },
     onError: (e: any) => toast.error(e.message),
   });
   if (loading) return <Modal title={`Budget for ${mk}`} onClose={onClose}><p className="text-sm text-mute">Loading budget settings…</p></Modal>;

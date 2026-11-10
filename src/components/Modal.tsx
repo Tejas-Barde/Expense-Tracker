@@ -16,8 +16,8 @@ export default function Modal({ title, onClose, children }: { title: string; onC
   return (
     <div role="presentation" className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 overscroll-contain" onClick={onClose}>
       <div role="dialog" aria-modal="true" aria-label={title} className="w-full sm:max-w-md bg-panel border border-line rounded-t-2xl sm:rounded-2xl p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom))] max-h-[90dvh] overflow-y-auto overscroll-contain" onClick={(e) => e.stopPropagation()}>
-        <div className="flex justify-between mb-4"><h2 className="text-lg font-bold">{title}</h2>
-          <button onClick={onClose} aria-label="Close" className="text-mute">✕</button></div>
+        <div className="flex items-center justify-between gap-3 mb-4"><h2 className="text-lg font-bold">{title}</h2>
+          <button onClick={onClose} aria-label="Close dialog" className="grid size-11 place-items-center rounded-lg text-mute hover:bg-ink hover:text-text">✕</button></div>
         {children}
       </div>
     </div>

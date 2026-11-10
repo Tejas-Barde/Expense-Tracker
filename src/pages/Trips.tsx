@@ -9,7 +9,7 @@ import { money, timeTag } from "../lib/utils";
 export default function Trips() {
   const { user } = useAuth();
   const uid = user!.$id;
-  const { categories, expenses, loading } = useData();
+  const { categories, expenses, finance, loading } = useData();
   const qc = useQueryClient();
   const tripsQuery = useQuery({ queryKey: ["trips", uid], queryFn: () => listTrips(uid) });
   const trips = tripsQuery.data ?? [];
@@ -38,8 +38,12 @@ export default function Trips() {
     ...category,
     total: tripExpenses.filter((expense) => expense.categoryId === category.$id)
       .reduce((sum, expense) => sum + expense.amount, 0),
-  })).filter((category) => category.total > 0).sort((a, b) => b.total - a.total), [categories, tripExpenses]);
-  const total = tripExpenses.reduce((sum, expense) => sum + expense.amount, 0);
+  })).filter((category) => category.total > 0).sort((a, b) => b.total - a.total), [categories, tripExpenses, finance]);
+  const total = tripExpenses.reduce((sum, expense) =>
+    sum + expense.amount, 0);
+  const receivable = tripExpenses.reduce((sum, expense) =>
+    sum + finance.loans.filter((loan) => loan.expenseId === expense.$id)
+      .reduce((loanSum, loan) => loanSum + Math.max(loan.amount - loan.repaid, 0), 0), 0);
 
   if (loading || tripsQuery.isLoading) return <p className="text-mute">Loading…</p>;
 
@@ -65,8 +69,8 @@ export default function Trips() {
 
       {trips.length === 0 ? (
         <section className="rounded-xl border border-line bg-panel p-8 text-center">
-          <p className="font-semibold">No trips yet</p>
-          <p className="mt-1 text-sm text-mute">Create a trip, then add it when recording an expense.</p>
+          <p className="font-semibold">No trips recorded</p>
+          <p className="mt-1 text-sm text-mute">Create a trip to organize and review related transactions.</p>
         </section>
       ) : (
         <>
@@ -83,14 +87,14 @@ export default function Trips() {
             <>
               <section className="grid gap-3 sm:grid-cols-3">
                 <div className="rounded-xl border border-line bg-panel p-4 sm:col-span-1">
-                  <p className="text-sm text-mute">Trip total</p><p className="mt-1 text-3xl font-bold text-accent">{money(total)}</p>
+                  <p className="text-sm text-mute">Your trip share</p><p className="mt-1 text-3xl font-bold text-accent">{money(total)}</p>
                 </div>
                 <div className="rounded-xl border border-line bg-panel p-4">
                   <p className="text-sm text-mute">Expenses</p><p className="mt-1 text-2xl font-bold">{tripExpenses.length}</p>
                 </div>
                 <div className="rounded-xl border border-line bg-panel p-4">
-                  <p className="text-sm text-mute">Top category</p>
-                  <p className="mt-1 truncate text-xl font-bold">{categoryTotals[0]?.name ?? "—"}</p>
+                  <p className="text-sm text-mute">Receivable</p>
+                  <p className="mt-1 truncate text-xl font-bold text-emerald-400">{money(receivable)}</p>
                 </div>
               </section>
 
@@ -119,7 +123,9 @@ export default function Trips() {
                         <span className="size-3 shrink-0 rounded-full" style={{ background: category?.color ?? "#64748b" }} />
                         <div className="min-w-0 flex-1"><p className="truncate text-sm">{expense.note || category?.name || "Expense"}</p>
                           <p className="text-xs text-mute">{category?.name ?? "Unknown"} · {timeTag(expense.timestamp)}</p></div>
-                        <span className="shrink-0 font-semibold">{money(expense.amount)}</span>
+                        <div className="shrink-0 text-right">
+                          <p className="font-semibold">{money(expense.amount)}</p>
+                        </div>
                       </article>
                     );
                   })}

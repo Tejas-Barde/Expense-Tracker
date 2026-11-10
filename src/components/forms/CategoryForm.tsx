@@ -13,7 +13,7 @@ export default function CategoryForm({ onClose }: { onClose: () => void }) {
     onError: (e: any) => toast.error(e.message),
   });
   return (
-    <Modal title="New category" onClose={onClose}>
+    <Modal title="Add category" onClose={onClose}>
       <div className="space-y-3">
         <datalist id="category-name-suggestions">
           {categories.map((category) => <option key={category.$id} value={category.name} />)}

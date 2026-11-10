@@ -14,6 +14,6 @@ export function useData(month?: Date) {
   const f = useQuery({ queryKey: ["finance", uid], queryFn: getFinance });
   const t = useQuery({ queryKey: ["trips", uid], queryFn: () => listTrips(uid) });
   return { uid, mk, categories: c.data ?? [], expenses: e.data ?? [], budget: b.data ?? null,
-    finance: f.data ?? { salary: 0, loans: [], friendPaidExpenses: [] },
+    finance: f.data ?? { salary: 0, loans: [], friendPaidExpenses: [], borrowings: [], settlements: [] },
     trips: t.data ?? [], loading: c.isLoading || e.isLoading || b.isLoading || f.isLoading || t.isLoading };
 }

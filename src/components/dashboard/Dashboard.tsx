@@ -3,6 +3,7 @@ import { toast } from "sonner";
 import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Legend, LineChart, Line, CartesianGrid } from "recharts";
 import { useData } from "../../lib/hooks";
 import { money, monthKey, dailyLimit, pace, barColor } from "../../lib/utils";
+import { actualCashOut } from "../../lib/services/finance";
 const Card = ({ title, children }: { title: string; children: React.ReactNode }) => (
   <section className="min-w-0 bg-panel border border-line rounded-xl p-4"><h3 className="text-sm text-mute mb-2">{title}</h3>{children}</section>);
 const tip = { contentStyle: { background: "#151c2c", color: "#edf2ff", border: "1px solid #29334a", borderRadius: 8 }, itemStyle: { color: "#edf2ff" }, labelStyle: { color: "#edf2ff" } };
@@ -18,25 +19,28 @@ export default function Dashboard({ month }: { month?: Date }) {
       .reduce((sum, item) => sum + (item.originalAmount ?? item.amount), 0);
     const month = expenses.filter((e) =>
       e.timestamp.startsWith(mk) || monthKey(new Date(e.timestamp)) === mk);
-    const personalShareFor = (expenseId: string, fallback: number) => {
-      if ((finance.friendPaidExpenses ?? []).some((item) => item.expenseId === expenseId)) return fallback;
-      const linkedLoans = finance.loans.filter((loan) => loan.expenseId === expenseId);
-      const friendShare = linkedLoans.reduce((sum, loan) => sum + loan.amount, 0);
-      return linkedLoans.length ? Math.max(0, fallback - friendShare) : fallback;
-    };
-    const expenseSpent = month.reduce((sum, expense) => sum + personalShareFor(expense.$id, expense.amount), 0);
+    const expenseSpent = month.reduce((sum, expense) => sum + expense.amount, 0);
+    const cashOutFromExpenses = month.reduce((sum, expense) =>
+      sum + actualCashOut(expense.$id, expense.amount, finance), 0);
     const lentThisMonth = finance.loans.filter((loan) => !loan.expenseId && monthKey(new Date(loan.timestamp)) === mk).reduce((sum, loan) => sum + loan.amount, 0);
-    const spent = expenseSpent + lentThisMonth;
-    const today = month.filter((e) => new Date(e.timestamp).toDateString() === now.toDateString()).reduce((s, e) => s + personalShareFor(e.$id, e.amount), 0)
+    const borrowedThisMonth = (finance.borrowings ?? [])
+      .filter((borrowing) => monthKey(new Date(borrowing.timestamp)) === mk)
+      .reduce((sum, borrowing) => sum + borrowing.amount, 0);
+    const spent = cashOutFromExpenses + lentThisMonth;
+    const todayExpenses = month.filter((expense) =>
+      new Date(expense.timestamp).toDateString() === now.toDateString())
+      .reduce((sum, expense) => sum + actualCashOut(expense.$id, expense.amount, finance), 0);
+    const today = todayExpenses
       + finance.loans.filter((loan) => !loan.expenseId && monthKey(new Date(loan.timestamp)) === mk && new Date(loan.timestamp).toDateString() === now.toDateString()).reduce((sum, loan) => sum + loan.amount, 0);
     const tripExpenseIds = new Set(trips.flatMap((trip) => trip.expenseIds));
     const tripSpent = month
       .filter((expense) => tripExpenseIds.has(expense.$id))
-      .reduce((sum, expense) => sum + personalShareFor(expense.$id, expense.amount), 0);
+      .reduce((sum, expense) => sum + expense.amount, 0);
     const byCat: Record<string, number> = {};
     month.forEach((expense) => {
       if (tripExpenseIds.has(expense.$id)) return;
-      byCat[expense.categoryId] = (byCat[expense.categoryId] ?? 0) + personalShareFor(expense.$id, expense.amount);
+      if (/^Settlement (paid to|received from) /i.test(expense.note)) return;
+      byCat[expense.categoryId] = (byCat[expense.categoryId] ?? 0) + expense.amount;
     });
     byCat["__trip__"] = tripSpent;
     const rows = [
@@ -52,12 +56,20 @@ export default function Dashboard({ month }: { month?: Date }) {
     const paidToFriends = debtsToFriends.reduce((sum, debt) =>
       sum + (debt.repayments ?? []).filter((payment) => monthKey(new Date(payment.timestamp)) === mk)
         .reduce((paymentSum, payment) => paymentSum + payment.amount, 0), 0);
+    const borrowings = finance.borrowings ?? [];
+    const borrowingOutstanding = borrowings.reduce((sum, borrowing) =>
+      sum + Math.max(borrowing.amount - borrowing.repaid, 0), 0);
+    const borrowingRepaid = borrowings.reduce((sum, borrowing) =>
+      sum + (borrowing.repayments ?? []).filter((payment) => monthKey(new Date(payment.timestamp)) === mk)
+        .reduce((paymentSum, payment) => paymentSum + payment.amount, 0), 0);
     let cum = 0; const trend = Array.from({ length: isPastMonth ? daysInMonth : now.getDate() }, (_, i) => {
-      cum += month.filter((e) => new Date(e.timestamp).getDate() === i + 1).reduce((s, e) => s + personalShareFor(e.$id, e.amount), 0)
+      cum += month.filter((e) => new Date(e.timestamp).getDate() === i + 1).reduce((s, e) => s + actualCashOut(e.$id, e.amount, finance), 0)
         + finance.loans.filter((loan) => !loan.expenseId && monthKey(new Date(loan.timestamp)) === mk && new Date(loan.timestamp).getDate() === i + 1).reduce((sum, loan) => sum + loan.amount, 0);
       return { day: i + 1, total: cum };
     });
-    return { spent, expenseSpent, tripSpent, friendPaid, received, moneyOwed, oweToFriends, paidToFriends, today, rows, trend, average: spent / daysInMonth, top: [...rows].sort((a, b) => b.spent - a.spent)[0] };
+    return { spent, expenseSpent, tripSpent, friendPaid, received, moneyOwed, oweToFriends, paidToFriends,
+      borrowedThisMonth, borrowingOutstanding, borrowingRepaid, today, rows, trend, average: spent / daysInMonth,
+      top: [...rows].sort((a, b) => b.spent - a.spent)[0] };
   }, [expenses, categories, budget, finance, trips, mk, isPastMonth, daysInMonth, now]);
 
   const monthEnd = month ? new Date(month.getFullYear(), month.getMonth() + 1, 0) : now;
@@ -116,16 +128,22 @@ export default function Dashboard({ month }: { month?: Date }) {
             : "Add salary to compare"}</p></Card>
       </div>
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3">
-        <Card title="Paid by friends"><p className="text-xl font-bold text-sky-300">{money(d.friendPaid)}</p>
-          <p className="text-xs text-mute">Excluded from your spending</p></Card>
-        <Card title="Friends owe you"><p className="text-xl font-bold text-emerald-400">{money(d.moneyOwed)}</p>
+        <Card title="Paid by others"><p className="text-xl font-bold text-sky-300">{money(d.friendPaid)}</p>
+          <p className="text-xs text-mute">Outside account cash out; included in categories</p></Card>
+        <Card title="Receivable"><p className="text-xl font-bold text-emerald-400">{money(d.moneyOwed)}</p>
           <p className="text-xs text-mute">Not yet received</p></Card>
         <Card title={isPastMonth ? "Received that month" : "Received this month"}><p className="text-xl font-bold text-emerald-400">{money(d.received)}</p>
-          <p className="text-xs text-mute">Friend repayments credited</p></Card>
-        <Card title="You owe friends"><p className="text-xl font-bold text-red-300">{money(d.oweToFriends)}</p>
-          <p className="text-xs text-mute">Friend-paid expenses not settled</p></Card>
-        <Card title={isPastMonth ? "Paid to friends that month" : "Paid to friends this month"}><p className="text-xl font-bold text-red-300">{money(d.paidToFriends)}</p>
-          <p className="text-xs text-mute">Payments clearing friend debts</p></Card>
+          <p className="text-xs text-mute">Repayments credited</p></Card>
+        <Card title="Payable"><p className="text-xl font-bold text-red-300">{money(d.oweToFriends + d.borrowingOutstanding)}</p>
+          <p className="text-xs text-mute">Shared expenses and money borrowed</p></Card>
+        <Card title={isPastMonth ? "Paid out that month" : "Paid out this month"}><p className="text-xl font-bold text-red-300">{money(d.paidToFriends)}</p>
+          <p className="text-xs text-mute">Payments applied to balances</p></Card>
+        <Card title={isPastMonth ? "Borrowed that month" : "Borrowed this month"}><p className="text-xl font-bold text-violet-300">{money(d.borrowedThisMonth)}</p>
+          <p className="text-xs text-mute">Not counted as income</p></Card>
+        <Card title="Borrowing payable"><p className="text-xl font-bold text-red-300">{money(d.borrowingOutstanding)}</p>
+          <p className="text-xs text-mute">Remaining balance</p></Card>
+        <Card title={isPastMonth ? "Borrowing repaid" : "Borrowing repaid this month"}><p className="text-xl font-bold">{money(d.borrowingRepaid)}</p>
+          <p className="text-xs text-mute">Payments applied to borrowings</p></Card>
       </div>
       <div className="grid gap-4 lg:grid-cols-2">
         <Card title="Category share">
