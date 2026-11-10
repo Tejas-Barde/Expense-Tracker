@@ -47,6 +47,10 @@ export async function moveExpenseToTrip(expenseId: string, tripId: string): Prom
   }));
 }
 
+export async function restoreTrips(trips: Trip[]): Promise<void> {
+  await setJSON(TRIPS_KEY, trips);
+}
+
 export async function removeExpensesFromTrips(expenseIds: string[]): Promise<void> {
   const removed = new Set(expenseIds);
   const trips = await getJSON<Trip[]>(TRIPS_KEY, []);

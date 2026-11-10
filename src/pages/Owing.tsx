@@ -7,10 +7,14 @@ import { deleteBorrowing, deleteLoan, friendNameKey, normalizeFriendName, record
 import { addExpense, deleteExpense } from "../lib/services/expenses";
 import { addCategory, listCategories } from "../lib/services/categories";
 import LendingForm from "../components/forms/LendingForm";
+import { useConfirm } from "../components/Confirm";
+import { deleteTransactions } from "../lib/services/transactions";
+import { errorMessage } from "../lib/errors";
 
 export default function Owing() {
   const { uid, categories, finance, loading } = useData();
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const [showForm, setShowForm] = useState(false);
   const [settlementAmounts, setSettlementAmounts] = useState<Record<string, string>>({});
   const settlementMutation = useMutation({
@@ -40,14 +44,28 @@ export default function Owing() {
         if (settlementExpenseId) await Promise.allSettled([deleteExpense(settlementExpenseId)]);
         throw error;
       }
+      return { $id: created.$id, userId: uid, amount, categoryId: category.$id, note: created.note as string, timestamp: created.timestamp as string };
     },
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["finance", uid] });
-      qc.invalidateQueries({ queryKey: ["expenses"] });
-      qc.invalidateQueries({ queryKey: ["categories"] });
-      toast.success("Settlement updated");
+    onSuccess: (settlement) => {
+      const refresh = () => {
+        qc.invalidateQueries({ queryKey: ["finance", uid] });
+        qc.invalidateQueries({ queryKey: ["expenses"] });
+        qc.invalidateQueries({ queryKey: ["categories"] });
+      };
+      refresh();
+      toast.success("Payment recorded", {
+        duration: 8000,
+        action: {
+          label: "Undo",
+          onClick: () => {
+            deleteTransactions([settlement.$id], [settlement])
+              .then(() => { refresh(); toast.success("Payment reversed"); })
+              .catch((error) => toast.error(errorMessage(error, "Couldn't reverse the payment.")));
+          },
+        },
+      });
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: unknown) => toast.error(errorMessage(error, "Could not record the payment. Please try again.")),
   });
   const totalLent = finance.loans.reduce((sum, loan) => sum + loan.amount, 0);
   const totalRepaid = finance.loans.reduce((sum, loan) => sum + loan.repaid, 0);
@@ -91,8 +109,8 @@ export default function Owing() {
   return (
     <div className="min-w-0 space-y-4">
       <header className="flex items-center justify-between gap-3">
-        <div><h2 className="text-xl font-bold">Balances</h2><p className="text-sm text-mute">Track outstanding amounts with other people.</p></div>
-        <button className="btn shrink-0" onClick={() => setShowForm(true)}>Record money</button>
+        <div><h2 className="text-xl font-bold">Balances</h2><p className="text-sm text-mute">See who owes you and who you owe, and record payments.</p></div>
+        <button className="btn shrink-0" onClick={() => setShowForm(true)}>Record loan or borrowing</button>
       </header>
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
         <Summary title="Total lent" amount={totalLent} />
@@ -142,24 +160,24 @@ export default function Owing() {
                       {net < 0 && (
                         <button className="btn-ghost disabled:opacity-40"
                           disabled={settlementMutation.isPending || amount <= 0 || amount > Math.abs(net)}
-                          onClick={() => {
-                            if (!window.confirm(`Confirm that you paid ${balance.name} ${money(amount)}?`)) return;
+                          onClick={async () => {
+                            if (!(await confirm({ title: "Record this payment?", message: `You paid ${balance.name} ${money(amount)}. It will reduce what you owe and come out of your balance.`, confirmLabel: "Record payment" }))) return;
                             settlementMutation.mutate(
                               { friend: balance.name, direction: "to_friend", amount },
                               { onSuccess: () => setSettlementAmounts({ ...settlementAmounts, [key]: "" }) },
                             );
-                          }}>You paid</button>
+                          }}>I paid them</button>
                       )}
                       {net > 0 && (
                         <button className="btn disabled:opacity-40"
                           disabled={settlementMutation.isPending || amount <= 0 || amount > net}
-                          onClick={() => {
-                            if (!window.confirm(`Confirm that ${balance.name} paid you ${money(amount)}?`)) return;
+                          onClick={async () => {
+                            if (!(await confirm({ title: "Record this payment?", message: `${balance.name} paid you ${money(amount)}. It will reduce what they owe and be added to your balance.`, confirmLabel: "Record payment" }))) return;
                             settlementMutation.mutate(
                               { friend: balance.name, direction: "from_friend", amount },
                               { onSuccess: () => setSettlementAmounts({ ...settlementAmounts, [key]: "" }) },
                             );
-                          }}>Payment received</button>
+                          }}>They paid me</button>
                       )}
                     </div>
                   )}
@@ -172,8 +190,8 @@ export default function Owing() {
       {debtsToFriends.length > 0 && (
         <section className="space-y-3">
           <div>
-            <h3 className="font-semibold">Payments you owe</h3>
-            <p className="text-xs text-mute">Transactions paid by someone else on your behalf</p>
+            <h3 className="font-semibold">Shared expenses you owe</h3>
+            <p className="text-xs text-mute">Expenses someone else paid for you</p>
           </div>
           {debtsToFriends.map((debt) => {
             const due = Math.max(debt.amount - (debt.repaid ?? 0), 0);
@@ -212,13 +230,13 @@ export default function Owing() {
                     </div>
                     <button type="button" className="grid size-11 place-items-center rounded-lg text-mute hover:bg-red-500/10 hover:text-red-400"
                       aria-label={`Delete borrowing from ${borrowing.lender}`} onClick={async () => {
-                        if (!window.confirm(`Delete the borrowing record from ${borrowing.lender}?`)) return;
+                        if (!(await confirm({ title: "Delete this borrowing?", message: `The borrowing record from ${borrowing.lender} will be removed.`, confirmLabel: "Delete", destructive: true }))) return;
                         try {
                           await deleteBorrowing(borrowing.id);
                           qc.invalidateQueries({ queryKey: ["finance", uid] });
                           toast.success("Borrowing deleted");
                         } catch (error) {
-                          toast.error(error instanceof Error ? error.message : "Could not delete borrowing.");
+                          toast.error(errorMessage(error, "Could not delete the borrowing."));
                         }
                       }}>🗑</button>
                   </div>
@@ -229,8 +247,8 @@ export default function Owing() {
         </section>
       )}
       {!finance.loans.length && !debtsToFriends.length && borrowings.length === 0 && <section className="rounded-xl border border-line bg-panel p-6 text-center">
-        <p className="font-semibold">No balances recorded</p>
-        <p className="mt-1 text-sm text-mute">Record money lent, borrowed, or settled to keep balances up to date.</p>
+        <p className="font-semibold">No balances yet</p>
+        <p className="mt-1 text-sm text-mute">Record a loan or borrowing, or add an expense that someone else paid.</p>
       </section>}
       <div className="space-y-3">
         {finance.loans.map((loan) => {
@@ -243,13 +261,13 @@ export default function Owing() {
                 <p className="text-sm text-emerald-400">{money(due)} owed</p></div>
                 <button type="button" className="grid size-11 place-items-center rounded-lg text-mute hover:bg-red-500/10 hover:text-red-400"
                   aria-label={`Delete loan to ${loan.friend}`} onClick={async () => {
-                    if (!window.confirm(`Delete the loan record to ${loan.friend}?`)) return;
+                    if (!(await confirm({ title: "Delete this loan?", message: `The loan record to ${loan.friend} will be removed.`, confirmLabel: "Delete", destructive: true }))) return;
                     try {
                       await deleteLoan(loan.id);
                       qc.invalidateQueries({ queryKey: ["finance", uid] });
                       toast.success("Loan deleted");
                     } catch (error) {
-                      toast.error(error instanceof Error ? error.message : "Could not delete loan.");
+                      toast.error(errorMessage(error, "Could not delete the loan."));
                     }
                   }}>🗑</button>
               </div>

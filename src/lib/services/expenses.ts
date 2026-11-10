@@ -24,6 +24,15 @@ export const updateExpense = (id: string, e: { amount: number; categoryId: strin
     rowId: id,
     data: e,
   }));
+/** Re-creates a previously deleted expense under its original id so links from finance data and trips stay valid. */
+export const restoreExpense = (uid: string, e: Expense) =>
+  tablesDB.createRow({
+    databaseId: DB,
+    tableId: TABLE.expenses,
+    rowId: e.$id,
+    data: { userId: uid, amount: e.amount, categoryId: e.categoryId, note: e.note, timestamp: e.timestamp },
+    permissions: ownerPerms(uid),
+  });
 export const deleteExpense = (id: string) =>
   tablesDB.deleteRow({ databaseId: DB, tableId: TABLE.expenses, rowId: id });
 

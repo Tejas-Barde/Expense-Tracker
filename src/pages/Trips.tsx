@@ -5,6 +5,8 @@ import { useAuth } from "../lib/auth";
 import { useData } from "../lib/hooks";
 import { createTrip, listTrips } from "../lib/services/trips";
 import { money, timeTag } from "../lib/utils";
+import { errorMessage } from "../lib/errors";
+import { categorySpend } from "../lib/services/finance";
 
 export default function Trips() {
   const { user } = useAuth();
@@ -29,28 +31,28 @@ export default function Trips() {
       setSelectedId(trip.id);
       setNewName("");
       setCreating(false);
-      toast.success("Trip created");
+      toast.success("Trip created. Pick it when adding a transaction.");
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: (error: unknown) => toast.error(errorMessage(error, "Could not create the trip. Please try again.")),
   });
 
   const categoryTotals = useMemo(() => categories.map((category) => ({
     ...category,
     total: tripExpenses.filter((expense) => expense.categoryId === category.$id)
-      .reduce((sum, expense) => sum + expense.amount, 0),
+      .reduce((sum, expense) => sum + categorySpend(expense, finance), 0),
   })).filter((category) => category.total > 0).sort((a, b) => b.total - a.total), [categories, tripExpenses, finance]);
   const total = tripExpenses.reduce((sum, expense) =>
-    sum + expense.amount, 0);
+    sum + categorySpend(expense, finance), 0);
   const receivable = tripExpenses.reduce((sum, expense) =>
     sum + finance.loans.filter((loan) => loan.expenseId === expense.$id)
       .reduce((loanSum, loan) => loanSum + Math.max(loan.amount - loan.repaid, 0), 0), 0);
 
-  if (loading || tripsQuery.isLoading) return <p className="text-mute">Loading…</p>;
+  if (loading || tripsQuery.isLoading) return <p className="text-mute">Loading your trips…</p>;
 
   return (
     <div className="min-w-0 space-y-4">
       <header className="flex items-center justify-between gap-3">
-        <div><h1 className="text-xl font-bold">Trips</h1><p className="text-sm text-mute">View each trip separately from regular spending.</p></div>
+        <div><h1 className="text-xl font-bold">Trips</h1><p className="text-sm text-mute">Trip spending is kept apart from your everyday categories.</p></div>
         <button type="button" className="btn-ghost shrink-0" onClick={() => setCreating((value) => !value)}>
           {creating ? "Cancel" : "New trip"}
         </button>
@@ -62,15 +64,15 @@ export default function Trips() {
           if (newName.trim()) createMutation.mutate();
         }}>
           <input className="input flex-1" value={newName} onChange={(event) => setNewName(event.target.value)}
-            placeholder="Trip name, e.g. Goa 2026" autoFocus />
+            placeholder="Trip name, e.g. Goa 2026" aria-label="Trip name" autoFocus />
           <button className="btn shrink-0 disabled:opacity-40" disabled={!newName.trim() || createMutation.isPending}>Create</button>
         </form>
       )}
 
       {trips.length === 0 ? (
         <section className="rounded-xl border border-line bg-panel p-8 text-center">
-          <p className="font-semibold">No trips recorded</p>
-          <p className="mt-1 text-sm text-mute">Create a trip to organize and review related transactions.</p>
+          <p className="font-semibold">No trips yet</p>
+          <p className="mt-1 text-sm text-mute">Create a trip, then choose it when you add a transaction to see its spending by category.</p>
         </section>
       ) : (
         <>
@@ -100,7 +102,7 @@ export default function Trips() {
 
               <section className="rounded-xl border border-line bg-panel p-4">
                 <h2 className="mb-3 font-semibold">{selected.name} by category</h2>
-                {categoryTotals.length === 0 ? <p className="text-sm text-mute">No expenses in this trip yet.</p> : (
+                {categoryTotals.length === 0 ? <p className="text-sm text-mute">No spending in this trip yet.</p> : (
                   <div className="space-y-3">{categoryTotals.map((category) => {
                     const pct = total ? (category.total / total) * 100 : 0;
                     return (
@@ -115,7 +117,7 @@ export default function Trips() {
 
               <section className="space-y-2">
                 <h2 className="font-semibold">Trip expenses</h2>
-                {tripExpenses.length === 0 ? <p className="rounded-xl border border-line bg-panel p-4 text-sm text-mute">Expenses linked to this trip will appear here.</p> :
+                {tripExpenses.length === 0 ? <p className="rounded-xl border border-line bg-panel p-4 text-sm text-mute">Transactions you add to this trip will appear here.</p> :
                   tripExpenses.map((expense) => {
                     const category = categories.find((item) => item.$id === expense.categoryId);
                     return (
@@ -124,7 +126,8 @@ export default function Trips() {
                         <div className="min-w-0 flex-1"><p className="truncate text-sm">{expense.note || category?.name || "Expense"}</p>
                           <p className="text-xs text-mute">{category?.name ?? "Unknown"} · {timeTag(expense.timestamp)}</p></div>
                         <div className="shrink-0 text-right">
-                          <p className="font-semibold">{money(expense.amount)}</p>
+                          <p className="font-semibold">{money(categorySpend(expense, finance))}</p>
+                          {categorySpend(expense, finance) !== expense.amount && <p className="text-xs text-mute">{money(expense.amount)} total</p>}
                         </div>
                       </article>
                     );

@@ -14,9 +14,16 @@ export async function getFinance(): Promise<FinanceData> {
     loans: Array.isArray(data.loans) ? data.loans : [],
     friendPaidExpenses: Array.isArray(data.friendPaidExpenses) ? data.friendPaidExpenses.map((item) => {
       if (typeof item.personalShare === "number") {
+        // Older saves stored the owed amount as (total - my share); what I owe the payer is my share.
+        const legacyInverted = typeof item.originalAmount === "number"
+          && item.personalShare !== item.amount
+          && Math.abs(item.originalAmount - item.personalShare - item.amount) < 0.005;
+        const owed = legacyInverted ? item.personalShare : item.amount;
+        const repaid = typeof item.repaid === "number" ? item.repaid : 0;
         return {
           ...item,
-          repaid: typeof item.repaid === "number" ? item.repaid : 0,
+          amount: owed,
+          repaid: Math.min(repaid, owed),
           repayments: Array.isArray(item.repayments) ? item.repayments : [],
         };
       }
@@ -114,7 +121,7 @@ export async function updateLoanRepaid(id: string, repaid: number) {
 }
 
 export async function addFriendPaidExpense(expense: FriendPaidExpense) {
-  if (!Number.isFinite(expense.amount) || expense.amount <= 0) throw new Error("The friend's paid share must be greater than zero.");
+  if (!Number.isFinite(expense.amount) || expense.amount <= 0) throw new Error("The amount owed to the payer must be greater than zero.");
   if (!normalizeFriendName(expense.friend)) throw new Error("Enter a friend name.");
   const finance = await getFinance();
   await saveFinance({
@@ -373,34 +380,51 @@ export async function replaceExpenseFinanceData(
   loans: Array<Omit<Loan, "id" | "repaid">>,
   borrowing: { lender: string; amount: number; note: string; timestamp: string } | null = null,
 ) {
-  await mutateJSON<FinanceData>(PREF_KEY, (finance) => ({
-    ...finance,
-    friendPaidExpenses: [
-      ...(finance.friendPaidExpenses ?? []).filter((item) => item.expenseId !== expenseId),
-      ...(friendPaid ? [{ ...friendPaid, friend: normalizeFriendName(friendPaid.friend), repaid: 0, repayments: [] }] : []),
-    ],
-    loans: [
-      ...finance.loans.filter((loan) => loan.expenseId !== expenseId),
-      ...loans.map((loan) => ({
-        ...loan,
-        friend: normalizeFriendName(loan.friend),
-        id: ID.unique(),
-        repaid: 0,
-        repayments: [],
-      })),
-    ],
-    borrowings: [
-      ...(finance.borrowings ?? []).filter((item) => item.expenseId !== expenseId),
-      ...(borrowing ? [{
-        ...borrowing,
-        lender: normalizeFriendName(borrowing.lender),
-        id: ID.unique(),
-        repaid: 0,
-        repayments: [],
-        expenseId,
-      }] : []),
-    ],
-  }), emptyFinance);
+  // Editing a transaction must not erase settlements already applied to it, so repayment history and
+  // record ids (which settlement allocations point to) are carried over to the rewritten entries.
+  await mutateJSON<FinanceData>(PREF_KEY, (finance) => {
+    const previousDebt = (finance.friendPaidExpenses ?? []).find((item) => item.expenseId === expenseId);
+    const previousLoans = finance.loans.filter((loan) => loan.expenseId === expenseId);
+    const previousBorrowing = (finance.borrowings ?? []).find((item) => item.expenseId === expenseId);
+    return {
+      ...finance,
+      friendPaidExpenses: [
+        ...(finance.friendPaidExpenses ?? []).filter((item) => item.expenseId !== expenseId),
+        ...(friendPaid ? [{
+          ...friendPaid,
+          friend: normalizeFriendName(friendPaid.friend),
+          repaid: previousDebt && friendNameKey(previousDebt.friend) === friendNameKey(friendPaid.friend)
+            ? Math.min(previousDebt.repaid ?? 0, friendPaid.amount) : 0,
+          repayments: previousDebt && friendNameKey(previousDebt.friend) === friendNameKey(friendPaid.friend)
+            ? previousDebt.repayments ?? [] : [],
+        }] : []),
+      ],
+      loans: [
+        ...finance.loans.filter((loan) => loan.expenseId !== expenseId),
+        ...loans.map((loan) => {
+          const previous = previousLoans.find((item) => friendNameKey(item.friend) === friendNameKey(loan.friend));
+          return {
+            ...loan,
+            friend: normalizeFriendName(loan.friend),
+            id: previous?.id ?? ID.unique(),
+            repaid: Math.min(previous?.repaid ?? 0, loan.amount),
+            repayments: previous?.repayments ?? [],
+          };
+        }),
+      ],
+      borrowings: [
+        ...(finance.borrowings ?? []).filter((item) => item.expenseId !== expenseId),
+        ...(borrowing ? [{
+          ...borrowing,
+          lender: normalizeFriendName(borrowing.lender),
+          id: previousBorrowing?.id ?? ID.unique(),
+          repaid: Math.min(previousBorrowing?.repaid ?? 0, borrowing.amount),
+          repayments: previousBorrowing?.repayments ?? [],
+          expenseId,
+        }] : []),
+      ],
+    };
+  }, emptyFinance);
 }
 
 export function normalizeFriendName(name: string) {
@@ -429,4 +453,18 @@ export function actualCashOut(expenseId: string, grossAmount: number, finance: F
   if ((finance.friendPaidExpenses ?? []).some((item) => item.expenseId === expenseId)) return 0;
   if ((finance.borrowings ?? []).some((item) => item.expenseId === expenseId)) return 0;
   return grossAmount;
+}
+
+export const isSettlementNote = (note: string) => /^Settlement (paid to|received from) /i.test(note);
+
+/** Net movement of the real bank balance: money received from a friend is an inflow (negative). */
+export function accountCashFlow(expense: { $id: string; amount: number; note: string }, finance: FinanceData) {
+  if (/^Settlement received from /i.test(expense.note)) return -expense.amount;
+  return actualCashOut(expense.$id, expense.amount, finance);
+}
+
+/** What the expense counts as in category/trip spending: only the user's own share. */
+export function categorySpend(expense: { $id: string; amount: number; note: string }, finance: FinanceData) {
+  if (isSettlementNote(expense.note)) return 0;
+  return personalExpenseShare(expense.$id, expense.amount, finance);
 }
