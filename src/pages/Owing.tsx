@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useData } from "../lib/hooks";
 import { money } from "../lib/utils";
-import { deleteBorrowing, deleteLoan, friendNameKey, normalizeFriendName, recordFriendSettlement } from "../lib/services/finance";
+import { deleteBorrowing, deleteLoan, friendBalances, friendNameKey, netPosition, normalizeFriendName, recordFriendSettlement } from "../lib/services/finance";
 import { addExpense, deleteExpense } from "../lib/services/expenses";
 import { addCategory, listCategories } from "../lib/services/categories";
 import LendingForm from "../components/forms/LendingForm";
@@ -77,63 +77,40 @@ export default function Owing() {
   const borrowedOutstanding = borrowings.reduce((sum, borrowing) =>
     sum + Math.max(borrowing.amount - borrowing.repaid, 0), 0);
   const totalPayable = totalOwedToFriends + borrowedOutstanding;
-  const balances = new Map<string, { name: string; theyOweYou: number; youOweThem: number }>();
-  finance.loans.forEach((loan) => {
-    const name = normalizeFriendName(loan.friend);
-    if (!name) return;
-    const key = friendNameKey(name);
-    const current = balances.get(key) ?? { name, theyOweYou: 0, youOweThem: 0 };
-    current.theyOweYou += Math.max(loan.amount - loan.repaid, 0);
-    balances.set(key, current);
-  });
-  debtsToFriends.forEach((debt) => {
-    const name = normalizeFriendName(debt.friend);
-    if (!name) return;
-    const key = friendNameKey(name);
-    const current = balances.get(key) ?? { name, theyOweYou: 0, youOweThem: 0 };
-    current.youOweThem += Math.max(debt.amount - (debt.repaid ?? 0), 0);
-    balances.set(key, current);
-  });
-  borrowings.forEach((borrowing) => {
-    const name = normalizeFriendName(borrowing.lender);
-    if (!name) return;
-    const key = friendNameKey(name);
-    const current = balances.get(key) ?? { name, theyOweYou: 0, youOweThem: 0 };
-    current.youOweThem += Math.max(borrowing.amount - borrowing.repaid, 0);
-    balances.set(key, current);
-  });
-  const netBalance = [...balances.values()].reduce((sum, balance) =>
-    sum + balance.theyOweYou - balance.youOweThem, 0);
+  const balances = friendBalances(finance);
+  const netBalance = netPosition(finance);
 
   if (loading) return <p className="text-mute">Loading…</p>;
   return (
     <div className="min-w-0 space-y-4">
-      <header className="flex items-center justify-between gap-3">
+      <header className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div><h2 className="text-xl font-bold">Balances</h2><p className="text-sm text-mute">See who owes you and who you owe, and record payments.</p></div>
-        <button className="btn shrink-0" onClick={() => setShowForm(true)}>Record loan or borrowing</button>
+        <button className="btn w-full shrink-0 sm:w-auto" onClick={() => setShowForm(true)}>Record loan or borrowing</button>
       </header>
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6">
-        <Summary title="Total lent" amount={totalLent} />
-        <Summary title="Repaid to you" amount={totalRepaid} />
-        <Summary title="Receivable" amount={outstanding} prominent />
-        <Summary title="Total borrowed" amount={totalBorrowed} />
-        <Summary title="Borrowing outstanding" amount={borrowedOutstanding} negative={borrowedOutstanding > 0} />
-        <Summary title="You owe others" amount={totalPayable} negative={totalPayable > 0} />
+      <div className="grid gap-3 sm:grid-cols-3">
+        <Summary title="Others owe you" amount={outstanding} prominent
+          suffix={finance.loans.length ? "Money you lent, plus your share of costs you paid for others" : "Nobody owes you anything"} />
+        <Summary title="You owe others" amount={totalPayable} negative={totalPayable > 0}
+          suffix={totalPayable > 0
+            ? [borrowedOutstanding > 0 ? `${money(borrowedOutstanding)} borrowed` : "", totalOwedToFriends > 0 ? `${money(totalOwedToFriends)} for expenses others paid` : ""].filter(Boolean).join(" + ")
+            : "You do not owe anyone"} />
         <Summary
-          title="Net settlement"
+          title="Net position"
           amount={Math.abs(netBalance)}
-          prominent={netBalance !== 0}
-          suffix={netBalance > 0 ? "owed to you" : netBalance < 0 ? "you owe" : "settled"}
+          prominent={netBalance > 0}
           negative={netBalance < 0}
-        />
+          suffix={netBalance === 0 ? "All square" : `${netBalance > 0 ? "Owed to you overall" : "You owe overall"} · ${money(outstanding)} owed to you − ${money(totalPayable)} you owe`} />
       </div>
-      {balances.size > 0 && (
+      <p className="px-1 text-xs text-mute">
+        Lent so far {money(totalLent)} ({money(totalRepaid)} paid back) · Borrowed so far {money(totalBorrowed)} ({money(totalBorrowed - borrowedOutstanding)} repaid)
+      </p>
+      {balances.length > 0 && (
         <section className="rounded-xl border border-line bg-panel p-4">
           <h3 className="font-semibold">Overall balances</h3>
           <p className="mb-3 text-xs text-mute">Net settlement is shown by person, with gross amounts listed below.</p>
           <div className="space-y-2">
-            {[...balances.values()].map((balance) => {
-              const net = balance.theyOweYou - balance.youOweThem;
+            {balances.map((balance) => {
+              const net = balance.net;
               const key = friendNameKey(balance.name);
               const amount = Number(settlementAmounts[key] ?? "");
               return (
@@ -157,6 +134,8 @@ export default function Owing() {
                           value={settlementAmounts[key] ?? ""} placeholder="Enter amount paid"
                           onChange={(event) => setSettlementAmounts({ ...settlementAmounts, [key]: event.target.value })} />
                       </label>
+                      <button type="button" className="btn-ghost shrink-0 !px-3 text-sm"
+                        onClick={() => setSettlementAmounts({ ...settlementAmounts, [key]: String(Math.abs(net)) })}>Full {money(Math.abs(net))}</button>
                       {net < 0 && (
                         <button className="btn-ghost disabled:opacity-40"
                           disabled={settlementMutation.isPending || amount <= 0 || amount > Math.abs(net)}
@@ -220,7 +199,7 @@ export default function Owing() {
                   <div>
                     <h4 className="font-semibold">{borrowing.lender}</h4>
                     <p className="text-xs text-mute">
-                      {new Date(borrowing.timestamp).toLocaleDateString()}{borrowing.note ? ` · ${borrowing.note}` : ""}
+                      {borrowing.opening ? "Opening balance" : new Date(borrowing.timestamp).toLocaleDateString()}{borrowing.note ? ` · ${borrowing.note}` : ""}
                     </p>
                   </div>
                   <div className="flex items-start gap-2 text-right">
@@ -228,7 +207,7 @@ export default function Owing() {
                       <p className="font-semibold">{money(borrowing.amount)} borrowed</p>
                       <p className="text-sm text-red-300">{money(due)} outstanding</p>
                     </div>
-                    <button type="button" className="grid size-11 place-items-center rounded-lg text-mute hover:bg-red-500/10 hover:text-red-400"
+                    {!borrowing.expenseId && <button type="button" className="grid size-11 place-items-center rounded-lg text-mute hover:bg-red-500/10 hover:text-red-400"
                       aria-label={`Delete borrowing from ${borrowing.lender}`} onClick={async () => {
                         if (!(await confirm({ title: "Delete this borrowing?", message: `The borrowing record from ${borrowing.lender} will be removed.`, confirmLabel: "Delete", destructive: true }))) return;
                         try {
@@ -238,7 +217,7 @@ export default function Owing() {
                         } catch (error) {
                           toast.error(errorMessage(error, "Could not delete the borrowing."));
                         }
-                      }}>🗑</button>
+                      }}>🗑</button>}
                   </div>
                 </div>
               </article>
@@ -248,7 +227,7 @@ export default function Owing() {
       )}
       {!finance.loans.length && !debtsToFriends.length && borrowings.length === 0 && <section className="rounded-xl border border-line bg-panel p-6 text-center">
         <p className="font-semibold">No balances yet</p>
-        <p className="mt-1 text-sm text-mute">Record a loan or borrowing, or add an expense that someone else paid.</p>
+        <p className="mt-1 text-sm text-mute">Record a loan or borrowing (tick the opening-balance box for money that was already owed before you started), or add an expense that someone else paid.</p>
       </section>}
       <div className="space-y-3">
         {finance.loans.map((loan) => {
@@ -256,10 +235,10 @@ export default function Owing() {
           return <section key={loan.id} className="min-w-0 rounded-xl border border-line bg-panel p-4">
             <div className="flex min-w-0 items-start justify-between gap-3">
               <div className="min-w-0"><h3 className="truncate font-semibold">{loan.friend}</h3>
-                <p className="text-xs text-mute">{new Date(loan.timestamp).toLocaleDateString()} {loan.note && `· ${loan.note}`}</p></div>
+                <p className="text-xs text-mute">{loan.opening ? "Opening balance" : new Date(loan.timestamp).toLocaleDateString()} {loan.note && `· ${loan.note}`}</p></div>
               <div className="flex shrink-0 items-start gap-2 text-right"><div><p className="font-semibold">{money(loan.amount)} lent</p>
                 <p className="text-sm text-emerald-400">{money(due)} owed</p></div>
-                <button type="button" className="grid size-11 place-items-center rounded-lg text-mute hover:bg-red-500/10 hover:text-red-400"
+                {!loan.expenseId && <button type="button" className="grid size-11 place-items-center rounded-lg text-mute hover:bg-red-500/10 hover:text-red-400"
                   aria-label={`Delete loan to ${loan.friend}`} onClick={async () => {
                     if (!(await confirm({ title: "Delete this loan?", message: `The loan record to ${loan.friend} will be removed.`, confirmLabel: "Delete", destructive: true }))) return;
                     try {
@@ -269,7 +248,7 @@ export default function Owing() {
                     } catch (error) {
                       toast.error(errorMessage(error, "Could not delete the loan."));
                     }
-                  }}>🗑</button>
+                  }}>🗑</button>}
               </div>
             </div>
           </section>;
@@ -290,6 +269,6 @@ function Summary({ title, amount, prominent = false, suffix, negative = false }:
   return <section className="rounded-xl border border-line bg-panel p-4">
     <p className="text-sm text-mute">{title}</p>
     <p className={`mt-1 text-2xl font-bold ${negative ? "text-red-300" : prominent ? "text-emerald-400" : ""}`}>{money(amount)}</p>
-    {suffix && <p className="mt-1 text-xs text-mute">{suffix}</p>}
+    {suffix && <p className="mt-1 text-xs leading-relaxed text-mute">{suffix}</p>}
   </section>;
 }

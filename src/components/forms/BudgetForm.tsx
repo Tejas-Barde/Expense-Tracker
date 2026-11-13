@@ -6,6 +6,7 @@ import { useData } from "../../lib/hooks";
 import { saveBudget } from "../../lib/services/budgets";
 import { saveSalary } from "../../lib/services/finance";
 import { errorMessage } from "../../lib/errors";
+import { isSystemCategory } from "../../lib/services/categories";
 import { money } from "../../lib/utils";
 
 const num = (value: string) => (value.trim() === "" ? 0 : Number(value));
@@ -73,7 +74,7 @@ export default function BudgetForm({ onClose }: { onClose: () => void }) {
         <fieldset>
           <legend className="mb-2 text-sm font-medium">Category limits <span className="font-normal text-mute">(optional)</span></legend>
           <div className="space-y-2">
-            {categories.map((c) => (
+            {categories.filter((c) => !isSystemCategory(c)).map((c) => (
               <div key={c.$id} className="flex items-center gap-3">
                 <span className="size-3 shrink-0 rounded-full" style={{ background: c.color }} aria-hidden="true" />
                 <span className="min-w-0 flex-1 truncate text-sm">{c.name}</span>

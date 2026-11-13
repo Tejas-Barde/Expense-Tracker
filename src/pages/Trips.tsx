@@ -3,7 +3,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { useAuth } from "../lib/auth";
 import { useData } from "../lib/hooks";
-import { createTrip, listTrips } from "../lib/services/trips";
+import { createTrip, deleteTrip, listTrips } from "../lib/services/trips";
+import { useConfirm } from "../components/Confirm";
 import { money, timeTag } from "../lib/utils";
 import { errorMessage } from "../lib/errors";
 import { categorySpend } from "../lib/services/finance";
@@ -13,6 +14,7 @@ export default function Trips() {
   const uid = user!.$id;
   const { categories, expenses, finance, loading } = useData();
   const qc = useQueryClient();
+  const confirm = useConfirm();
   const tripsQuery = useQuery({ queryKey: ["trips", uid], queryFn: () => listTrips(uid) });
   const trips = tripsQuery.data ?? [];
   const [selectedId, setSelectedId] = useState("");
@@ -87,8 +89,8 @@ export default function Trips() {
 
           {selected && (
             <>
-              <section className="grid gap-3 sm:grid-cols-3">
-                <div className="rounded-xl border border-line bg-panel p-4 sm:col-span-1">
+              <section className="grid grid-cols-2 gap-3 sm:grid-cols-3">
+                <div className="col-span-2 rounded-xl border border-line bg-panel p-4 sm:col-span-1">
                   <p className="text-sm text-mute">Your trip share</p><p className="mt-1 text-3xl font-bold text-accent">{money(total)}</p>
                 </div>
                 <div className="rounded-xl border border-line bg-panel p-4">
@@ -101,7 +103,24 @@ export default function Trips() {
               </section>
 
               <section className="rounded-xl border border-line bg-panel p-4">
-                <h2 className="mb-3 font-semibold">{selected.name} by category</h2>
+                <div className="mb-3 flex items-center justify-between gap-3">
+                  <h2 className="min-w-0 truncate font-semibold">{selected.name} by category</h2>
+                  <button type="button" className="min-h-11 shrink-0 rounded-lg px-3 text-sm text-mute hover:bg-red-500/10 hover:text-red-300"
+                    onClick={async () => {
+                      const ok = await confirm({
+                        title: `Delete the trip “${selected.name}”?`,
+                        message: "The transactions in it are kept. They will count in their normal categories again instead of under Trip.",
+                        confirmLabel: "Delete trip", destructive: true,
+                      });
+                      if (!ok) return;
+                      try {
+                        await deleteTrip(selected.id);
+                        setSelectedId("");
+                        qc.invalidateQueries({ queryKey: ["trips"] });
+                        toast.success("Trip deleted");
+                      } catch (error) { toast.error(errorMessage(error, "Could not delete the trip.")); }
+                    }}>Delete trip</button>
+                </div>
                 {categoryTotals.length === 0 ? <p className="text-sm text-mute">No spending in this trip yet.</p> : (
                   <div className="space-y-3">{categoryTotals.map((category) => {
                     const pct = total ? (category.total / total) * 100 : 0;

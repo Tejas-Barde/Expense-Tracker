@@ -18,12 +18,14 @@ export default function LendingForm({ onClose }: { onClose: () => void }) {
   const [note, setNote] = useState("");
   const [date, setDate] = useState("");
   const [submitted, setSubmitted] = useState(false);
+  const [opening, setOpening] = useState(false);
   const mutation = useMutation({
     mutationFn: () => {
       const entry = {
         amount: Number(amount),
         note: note.trim(),
         timestamp: date ? new Date(date).toISOString() : new Date().toISOString(),
+        ...(opening ? { opening: true } : {}),
       };
       return mode === "lend"
         ? addLoan({ ...entry, friend: normalizeFriendName(friend) })
@@ -54,10 +56,12 @@ export default function LendingForm({ onClose }: { onClose: () => void }) {
         setSubmitted(true);
         if (Object.keys(errors).length) return;
         const ok = await confirm({
-          title: mode === "lend" ? "Record this loan?" : "Record this borrowing?",
-          message: mode === "lend"
-            ? `You lent ${money(Number(amount))} to ${name}. It will count as money spent and as money owed to you.`
-            : `You borrowed ${money(Number(amount))} from ${name}. It will be recorded as money you owe, not as income.`,
+          title: opening ? "Record this opening balance?" : mode === "lend" ? "Record this loan?" : "Record this borrowing?",
+          message: opening
+            ? (mode === "lend" ? `${name} owed you ${money(Number(amount))} before you started. Your account and spending will not change.` : `You owed ${name} ${money(Number(amount))} before you started. Your account and spending will not change.`)
+            : mode === "lend"
+              ? `You lent ${money(Number(amount))} to ${name}. It will count as money spent and as money owed to you.`
+              : `You borrowed ${money(Number(amount))} from ${name}. It will be added to your balance and recorded as money you owe.`,
           confirmLabel: "Record",
         });
         if (ok) mutation.mutate();
@@ -82,13 +86,18 @@ export default function LendingForm({ onClose }: { onClose: () => void }) {
           {err("amount") && <span role="alert" className="mt-1 block text-xs text-red-300">{err("amount")}</span>}</label>
         <label className="block"><span className="mb-1 block text-sm font-medium">Note (optional)</span>
           <input className="input" value={note} maxLength={120} onChange={(event) => setNote(event.target.value)} placeholder="What was it for?" /></label>
+        <label className="flex min-h-11 cursor-pointer items-start gap-3 rounded-xl border border-line bg-ink p-3">
+          <input type="checkbox" className="mt-0.5 size-5 shrink-0 accent-[var(--color-accent)]" checked={opening} onChange={(event) => setOpening(event.target.checked)} />
+          <span className="text-sm"><span className="block font-medium">{mode === "lend" ? "They already owed me before I started using Ledgerly" : "I already owed this before I started using Ledgerly"}</span>
+            <span className="block text-xs leading-relaxed text-mute">Tracked as a balance only. It won't change your account balance or this month's spending, so you can record payments against it later.</span></span>
+        </label>
         <label className="block"><span className="mb-1 block text-sm font-medium">Date</span>
           <input className="input" type="date" value={date} onChange={(event) => setDate(event.target.value)} />
           <span className="mt-1 block text-xs text-mute">Leave empty to use today.</span></label>
         <p className="text-xs leading-relaxed text-mute">
           {mode === "lend"
             ? "Lending counts as money spent from your account and is tracked as money owed to you."
-            : "Borrowing is tracked as money you owe. It is not counted as income or spending."}
+            : "The money is added to your balance and tracked as something you owe. It is not counted as income."}
         </p>
         <button className="btn w-full disabled:opacity-50" type="submit" disabled={mutation.isPending}>
           {mutation.isPending ? "Saving…" : mode === "lend" ? "Save loan" : "Save borrowing"}

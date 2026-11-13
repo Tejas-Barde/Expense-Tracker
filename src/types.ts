@@ -9,6 +9,8 @@ export interface Loan {
   note: string;
   timestamp: string;
   expenseId?: string;
+  /** Already existed before the app was used: tracked as a balance only, never as money moving in or out. */
+  opening?: boolean;
   repayments?: { amount: number; timestamp: string }[];
 }
 export interface FriendPaidExpense {
@@ -29,6 +31,8 @@ export interface Borrowing {
   note: string;
   timestamp: string;
   expenseId?: string;
+  /** Already existed before the app was used: tracked as a balance only, never as money moving in or out. */
+  opening?: boolean;
   repayments?: { amount: number; timestamp: string }[];
 }
 export interface Trip {

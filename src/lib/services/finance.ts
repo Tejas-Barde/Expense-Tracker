@@ -27,13 +27,14 @@ export async function getFinance(): Promise<FinanceData> {
           repayments: Array.isArray(item.repayments) ? item.repayments : [],
         };
       }
+      // Oldest records: just { amount, friend, expenseId, timestamp }, where `amount` is what the user owes the payer
+      // (the user's own share). It must stay as the amount owed; only the missing fields are filled in.
       const gross = typeof item.originalAmount === "number" ? item.originalAmount : item.amount;
-      const personalShare = Math.max(0, Math.min(gross, item.amount));
       return {
         ...item,
         originalAmount: gross,
-        personalShare,
-        amount: Math.max(0, gross - personalShare),
+        personalShare: item.amount,
+        amount: item.amount,
         repaid: typeof item.repaid === "number" ? item.repaid : 0,
         repayments: Array.isArray(item.repayments) ? item.repayments : [],
       };
@@ -78,11 +79,12 @@ export async function addLoan(loan: Omit<Loan, "id" | "repaid">) {
 export async function deleteLoan(id: string) {
   const finance = await getFinance();
   const loan = finance.loans.find((item) => item.id === id);
+  if (loan?.expenseId) throw new Error("This loan belongs to a transaction. Edit or delete that transaction instead.");
   if (loan && loan.repaid > 0) throw new Error("This loan has repayment activity and cannot be deleted. Delete the settlement transaction instead.");
   await saveFinance({ ...finance, loans: finance.loans.filter((item) => item.id !== id) });
 }
 
-export async function addBorrowing(borrowing: { lender: string; amount: number; note: string; timestamp: string }) {
+export async function addBorrowing(borrowing: { lender: string; amount: number; note: string; timestamp: string; opening?: boolean }) {
   if (!Number.isFinite(borrowing.amount) || borrowing.amount <= 0) throw new Error("Enter an amount greater than zero.");
   if (!normalizeFriendName(borrowing.lender)) throw new Error("Enter a lender name.");
   const finance = await getFinance();
@@ -99,6 +101,7 @@ export async function addBorrowing(borrowing: { lender: string; amount: number; 
 export async function deleteBorrowing(id: string) {
   const finance = await getFinance();
   const borrowing = (finance.borrowings ?? []).find((item) => item.id === id);
+  if (borrowing?.expenseId) throw new Error("This borrowing belongs to a transaction. Edit or delete that transaction instead.");
   if (borrowing && borrowing.repaid > 0) throw new Error("This borrowing has repayment activity and cannot be deleted. Delete the settlement transaction instead.");
   await saveFinance({ ...finance, borrowings: (finance.borrowings ?? []).filter((item) => item.id !== id) });
 }
@@ -155,10 +158,12 @@ export async function recordFriendSettlement(
   direction: "to_friend" | "from_friend",
   amount: number,
   expenseId?: string,
+  /** When the payment actually happened. Defaults to now; set it when recording a past payment. */
+  paidAt?: string,
 ) {
   if (!Number.isFinite(amount) || amount <= 0) throw new Error("Enter an amount greater than zero.");
   const key = friendNameKey(friendName);
-  const timestamp = new Date().toISOString();
+  const timestamp = paidAt ?? new Date().toISOString();
   await mutateJSON<FinanceData>(PREF_KEY, (finance) => {
     const totalDue = direction === "to_friend"
       ? (finance.friendPaidExpenses ?? []).reduce((sum, debt) =>
@@ -167,7 +172,7 @@ export async function recordFriendSettlement(
           friendNameKey(borrowing.lender) === key ? sum + Math.max(borrowing.amount - borrowing.repaid, 0) : sum, 0)
       : finance.loans.reduce((sum, loan) =>
         friendNameKey(loan.friend) === key ? sum + Math.max(loan.amount - loan.repaid, 0) : sum, 0);
-    if (amount > totalDue + 0.000001) {
+    if (amount > totalDue + 0.01) {
       throw new Error(`Settlement cannot exceed the amount due (${amount.toFixed(2)} requested; ${totalDue.toFixed(2)} due).`);
     }
     let remaining = amount;
@@ -455,7 +460,45 @@ export function actualCashOut(expenseId: string, grossAmount: number, finance: F
   return grossAmount;
 }
 
-export const isSettlementNote = (note: string) => /^Settlement (paid to|received from) /i.test(note);
+export interface FriendBalance { key: string; name: string; theyOweYou: number; youOweThem: number; net: number }
+
+/**
+ * Per-person position. Everything you owe a person counts against what they owe you:
+ * shared expenses they paid for you, money you borrowed from them, and loans you made to them.
+ * `net > 0` means they owe you; `net < 0` means you owe them.
+ */
+export function friendBalances(finance: FinanceData): FriendBalance[] {
+  const map = new Map<string, FriendBalance>();
+  const entry = (rawName: string) => {
+    const name = normalizeFriendName(rawName);
+    if (!name) return null;
+    const key = friendNameKey(name);
+    const current = map.get(key) ?? { key, name, theyOweYou: 0, youOweThem: 0, net: 0 };
+    map.set(key, current);
+    return current;
+  };
+  for (const loan of finance.loans) {
+    const row = entry(loan.friend);
+    if (row) row.theyOweYou += Math.max(loan.amount - loan.repaid, 0);
+  }
+  for (const debt of finance.friendPaidExpenses ?? []) {
+    const row = entry(debt.friend);
+    if (row) row.youOweThem += Math.max(debt.amount - (debt.repaid ?? 0), 0);
+  }
+  for (const borrowing of finance.borrowings ?? []) {
+    const row = entry(borrowing.lender);
+    if (row) row.youOweThem += Math.max(borrowing.amount - borrowing.repaid, 0);
+  }
+  const cents = (value: number) => Math.round(value * 100) / 100;
+  return [...map.values()].map((row) => {
+    const theyOweYou = cents(row.theyOweYou), youOweThem = cents(row.youOweThem);
+    return { ...row, theyOweYou, youOweThem, net: cents(theyOweYou - youOweThem) };
+  });
+}
+
+export const netPosition = (finance: FinanceData) => friendBalances(finance).reduce((sum, row) => sum + row.net, 0);
+
+export const isSettlementNote =(note: string) => /^Settlement (paid to|received from) /i.test(note);
 
 /** Net movement of the real bank balance: money received from a friend is an inflow (negative). */
 export function accountCashFlow(expense: { $id: string; amount: number; note: string }, finance: FinanceData) {

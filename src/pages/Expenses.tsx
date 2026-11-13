@@ -6,7 +6,7 @@ import { useData } from "../lib/hooks";
 import { deleteTransactions, undoDelete } from "../lib/services/transactions";
 import { errorMessage } from "../lib/errors";
 import { categorySpend } from "../lib/services/finance";
-import { dayLabel, timeTag, money } from "../lib/utils";
+import { dayLabel, localDate, timeTag, money } from "../lib/utils";
 import Dashboard from "../components/dashboard/Dashboard";
 import ExpenseForm from "../components/forms/ExpenseForm";
 import type { Expense } from "../types";
@@ -35,7 +35,7 @@ export default function Expenses() {
   const visibleExpenses = useMemo(() => {
     const search = q.trim().toLowerCase();
     return expenses.filter((expense) => {
-      const date = expense.timestamp.slice(0, 10);
+      const date = localDate(expense.timestamp);
       return (!from || date >= from) && (!to || date <= to)
         && (!search || expense.note.toLowerCase().includes(search)
           || cat(expense.categoryId)?.name.toLowerCase().includes(search)
@@ -166,10 +166,14 @@ export default function Expenses() {
         </datalist>
         <input className="input" list="history-search-suggestions" placeholder="Search by note, category or date" value={q}
           onChange={(event) => { setQ(event.target.value); clearSelection(); }} />
-        <input className="input" type="date" value={from} aria-label="From date"
-          onChange={(event) => { setFrom(event.target.value); clearSelection(); }} />
-        <input className="input" type="date" value={to} aria-label="To date"
-          onChange={(event) => { setTo(event.target.value); clearSelection(); }} />
+        <div className="grid grid-cols-2 gap-2 sm:contents">
+          <label className="min-w-0 text-xs text-mute sm:text-[0px]">From
+            <input className="input mt-1 sm:mt-0" type="date" value={from} aria-label="From date"
+              onChange={(event) => { setFrom(event.target.value); clearSelection(); }} /></label>
+          <label className="min-w-0 text-xs text-mute sm:text-[0px]">To
+            <input className="input mt-1 sm:mt-0" type="date" value={to} aria-label="To date"
+              onChange={(event) => { setTo(event.target.value); clearSelection(); }} /></label>
+        </div>
       </div>
       {selectionMode && visibleExpenses.length > 0 && (
         <div className="flex min-h-12 items-center justify-between gap-3 rounded-xl border border-line bg-panel px-3 py-2">
