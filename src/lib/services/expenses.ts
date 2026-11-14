@@ -37,6 +37,21 @@ export const restoreExpense = (uid: string, e: Expense) =>
     data: { userId: uid, amount: e.amount, categoryId: e.categoryId, note: e.note, timestamp: e.timestamp },
     permissions: ownerPerms(uid),
   });
+/**
+ * Creates an expense under a caller-chosen id. If a row with that id already exists (another tab or an earlier
+ * attempt got there first), that counts as success, so the same payment can never be added twice.
+ */
+export async function createExpenseWithId(uid: string, id: string, e: { amount: number; categoryId: string; note: string; timestamp: string }): Promise<"created" | "existed"> {
+  try {
+    await tablesDB.createRow({ databaseId: DB, tableId: TABLE.expenses, rowId: id, data: { userId: uid, ...e }, permissions: ownerPerms(uid) });
+    return "created";
+  } catch (error) {
+    const code = (error as { code?: number; type?: string })?.code;
+    const type = (error as { type?: string })?.type ?? "";
+    if (code === 409 || /already_exists/i.test(type)) return "existed";
+    throw error;
+  }
+}
 export const setExpenseCategory = (id: string, categoryId: string) =>
   tablesDB.updateRow({ databaseId: DB, tableId: TABLE.expenses, rowId: id, data: { categoryId } });
 export const deleteExpense = (id: string) =>

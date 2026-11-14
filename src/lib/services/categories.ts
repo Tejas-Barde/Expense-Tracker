@@ -1,7 +1,8 @@
 import { ID } from "../appwrite/client";
-import { getJSON, setJSON } from "./prefs";
+import { getJSON, mutateJSON, setJSON } from "./prefs";
+import { listEmis, plansUsingCategories } from "./emis";
 import { listExpenses, setExpenseCategory } from "./expenses";
-import type { Category } from "../../types";
+import type { Category, EmiPlan } from "../../types";
 
 /** Categories seeded for a new account. Modelled on the groupings used by Splitwise, Walnut and Axio. */
 export const DEFAULT_CATEGORIES: { name: string; color: string; hint: string; core: boolean }[] = [
@@ -145,6 +146,7 @@ export async function deleteCategory(uid: string, id: string) {
   if (isSystemCategory(target)) throw new Error("This category is managed by the app and can't be deleted.");
   const used = (await listExpenses(uid)).filter((expense) => expense.categoryId === id).length;
   if (used > 0) throw new Error(`${used} transaction${used === 1 ? " uses" : "s use"} this category. Merge it into another category instead.`);
+  if (plansUsingCategories(await listEmis(), [id]).length) throw new Error("An EMI plan still adds payments to this category. Merge it into another category instead.");
   const budgets = await getJSON<StoredBudgets>("budgets", {});
   await setJSON("budgets", Object.fromEntries(Object.entries(budgets).map(([month, budget]) => {
     const { [id]: _removed, ...limits } = budget.limits;
@@ -153,7 +155,7 @@ export async function deleteCategory(uid: string, id: string) {
   await setJSON("categories", cats.filter((category) => category.$id !== id));
 }
 
-export interface MergeUndo { categories: Category[]; budgets: StoredBudgets; moved: { id: string; categoryId: string }[] }
+export interface MergeUndo { categories: Category[]; budgets: StoredBudgets; moved: { id: string; categoryId: string }[]; emiCategories?: { id: string; categoryId: string }[] }
 export interface MergeResult { moved: number; undo: MergeUndo }
 
 /**
@@ -194,8 +196,12 @@ export async function mergeCategories(uid: string, fromIds: string[], intoId: st
     return [month, { ...budget, limits }];
   }));
   await setJSON("budgets", mergedBudgets);
+  const emiCategories = (await listEmis()).filter((plan) => sources.includes(plan.categoryId)).map((plan) => ({ id: plan.id, categoryId: plan.categoryId }));
+  if (emiCategories.length) {
+    await mutateJSON<EmiPlan[]>("emis", (plans) => plans.map((plan) => sources.includes(plan.categoryId) ? { ...plan, categoryId: intoId } : plan), []);
+  }
   await setJSON("categories", cats.filter((category) => !sources.includes(category.$id)));
-  return { moved: moved.length, undo: { categories: cats, budgets, moved } };
+  return { moved: moved.length, undo: { categories: cats, budgets, moved, emiCategories } };
 }
 
 /**
@@ -205,6 +211,7 @@ export async function mergeCategories(uid: string, fromIds: string[], intoId: st
 export async function removeUnusedCategories(uid: string): Promise<{ removed: Category[]; undo: MergeUndo }> {
   const cats = await listCategories(uid);
   const used = new Set((await listExpenses(uid)).map((expense) => expense.categoryId));
+  plansUsingCategories(await listEmis(), cats.map((category) => category.$id)).forEach((plan) => used.add(plan.categoryId));
   const removed = cats.filter((category) => !used.has(category.$id) && !isSystemCategory(category) && !isCatchAll(category));
   if (!removed.length) return { removed, undo: { categories: cats, budgets: {}, moved: [] } };
   const budgets = await getJSON<StoredBudgets>("budgets", {});
@@ -219,6 +226,10 @@ export async function removeUnusedCategories(uid: string): Promise<{ removed: Ca
 export async function undoMerge(undo: MergeUndo) {
   await setJSON("categories", undo.categories);
   await setJSON("budgets", undo.budgets);
+  if (undo.emiCategories?.length) {
+    const original = new Map(undo.emiCategories.map((item) => [item.id, item.categoryId]));
+    await mutateJSON<EmiPlan[]>("emis", (plans) => plans.map((plan) => original.has(plan.id) ? { ...plan, categoryId: original.get(plan.id)! } : plan), []);
+  }
   const results = await Promise.allSettled(undo.moved.map((item) => setExpenseCategory(item.id, item.categoryId)));
   if (results.some((result) => result.status === "rejected")) throw new Error("Some transactions could not be moved back. Check your connection and try again.");
 }

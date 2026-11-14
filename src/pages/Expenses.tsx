@@ -6,13 +6,15 @@ import { useData } from "../lib/hooks";
 import { deleteTransactions, undoDelete } from "../lib/services/transactions";
 import { errorMessage } from "../lib/errors";
 import { categorySpend } from "../lib/services/finance";
+import { emiLabels } from "../lib/services/emis";
 import { dayLabel, localDate, timeTag, money } from "../lib/utils";
 import Dashboard from "../components/dashboard/Dashboard";
 import ExpenseForm from "../components/forms/ExpenseForm";
 import type { Expense } from "../types";
 
 export default function Expenses() {
-  const { uid, categories, expenses, finance } = useData();
+  const { uid, categories, expenses, finance, emis } = useData();
+  const emiLabel = useMemo(() => emiLabels(emis), [emis]);
   const qc = useQueryClient();
   const [q, setQ] = useState("");
   const [from, setFrom] = useState("");
@@ -205,6 +207,7 @@ export default function Expenses() {
             const sharedLoans = finance.loans.filter((loan) => loan.expenseId === expense.$id);
             const friendsOwedAmount = sharedLoans.reduce((sum, loan) => sum + Math.max(loan.amount - loan.repaid, 0), 0);
             const settlement = /^Settlement (paid to|received from) /i.test(expense.note);
+            const emiTag = emiLabel.get(expense.$id);
             const received = /^Settlement received from /i.test(expense.note);
             return (
               <article key={expense.$id} className={`flex min-w-0 items-center gap-2 rounded-xl border bg-panel py-2 pl-3 pr-1 ${selectedIds.has(expense.$id) ? "border-accent" : "border-line"}`}>
@@ -227,6 +230,7 @@ export default function Expenses() {
                       Your share {money(categorySpend(expense, finance))} · {money(friendsOwedAmount)} to receive
                     </span>}
                     {borrowing && <span className="rounded-full bg-violet-400/10 px-2 py-0.5 text-violet-300">Borrowed from {borrowing.lender}</span>}
+                    {emiTag && <span className="rounded-full bg-sky-400/10 px-2 py-0.5 text-sky-300">{emiTag}</span>}
                     {settlement && <span className="rounded-full bg-amber-400/10 px-2 py-0.5 text-amber-300">{received ? "Payment received" : "Payment made"}</span>}
                   </p>
                 </div>

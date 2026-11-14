@@ -1,7 +1,11 @@
-import { useState } from "react";
-import { BrowserRouter, Routes, Route, NavLink, Navigate, Outlet } from "react-router-dom";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { Toaster } from "sonner";
+import { useEffect, useState } from "react";
+import { BrowserRouter, Routes, Route, NavLink, Navigate, Outlet, useNavigate } from "react-router-dom";
+import { QueryClient, QueryClientProvider, useQueryClient } from "@tanstack/react-query";
+import { Toaster, toast } from "sonner";
+import EmiForm from "./components/forms/EmiForm";
+import Emis from "./pages/Emis";
+import { materializeDueEmis } from "./lib/services/emis";
+import { money } from "./lib/utils";
 import { AuthProvider, useAuth } from "./lib/auth";
 import { ConfirmProvider, useConfirm } from "./components/Confirm";
 import Modal from "./components/Modal";
@@ -29,7 +33,21 @@ const NAV = [
 function Layout() {
   const { user, loading, logout } = useAuth();
   const confirm = useConfirm();
-  const [modal, setModal] = useState<"expense" | "budget" | "category" | "more" | null>(null);
+  const [modal, setModal] = useState<"expense" | "budget" | "category" | "more" | "emi" | null>(null);
+  const queryClient = useQueryClient();
+  const navigate = useNavigate();
+  const dayKey = new Date().toDateString();
+  // EMI payments that have come due since the app was last opened are added as transactions, once each.
+  useEffect(() => {
+    if (!user) return;
+    materializeDueEmis(user.$id).then(({ created }) => {
+      if (!created.length) return;
+      queryClient.invalidateQueries({ queryKey: ["expenses"] });
+      queryClient.invalidateQueries({ queryKey: ["emis"] });
+      const total = created.reduce((sum, item) => sum + item.amount, 0);
+      toast.info(created.length === 1 ? `EMI payment added: ${created[0].planName}, ${money(created[0].amount)}` : `${created.length} EMI payments added, ${money(total)} in total`);
+    }).catch(() => { /* retried the next time the app opens */ });
+  }, [user?.$id, dayKey, queryClient]);
   if (loading) return <div className="grid min-h-dvh place-items-center text-sm text-mute" role="status">Loading your finances…</div>;
   if (!user) return <Navigate to="/login" replace />; // auth guard
   const link = ({ isActive }: { isActive: boolean }) => `min-h-11 px-3 py-2 rounded-lg flex items-center ${isActive ? "bg-accent/10 text-accent font-semibold" : "text-mute hover:bg-panel hover:text-text"}`;
@@ -40,7 +58,7 @@ function Layout() {
     const ok = await confirm({ title: "Sign out?", message: "You will need to sign in again to see your finances.", confirmLabel: "Sign out" });
     if (ok) void logout();
   };
-  const open = (next: "expense" | "budget" | "category") => setModal(next);
+  const open = (next: "expense" | "budget" | "category" | "emi") => setModal(next);
   return (
     <div className="min-h-dvh md:flex">
       <aside className="sticky top-0 hidden h-screen w-60 shrink-0 flex-col border-r border-line bg-panel/40 p-4 md:flex">
@@ -50,6 +68,7 @@ function Layout() {
         </div>
         <nav className="flex flex-col gap-1" aria-label="Main navigation">
           {NAV.map((item) => <NavLink key={item.to} to={item.to} end={item.end} className={link}>{item.label}</NavLink>)}
+          <NavLink to="/emis" className={link}>EMIs</NavLink>
         </nav>
         <div className="mt-5 space-y-2 border-t border-line pt-4">
           <button className="btn-ghost w-full text-left" onClick={() => open("budget")}>Budget and salary</button>
@@ -82,12 +101,14 @@ function Layout() {
         </button>
       </nav>
 
-      {modal === "expense" && <ExpenseForm onClose={() => setModal(null)} />}
+      {modal === "expense" && <ExpenseForm onClose={() => setModal(null)} onEmi={() => setModal("emi")} />}
+      {modal === "emi" && <EmiForm onClose={() => setModal(null)} />}
       {modal === "budget" && <BudgetForm onClose={() => setModal(null)} />}
       {modal === "category" && <CategoriesManager onClose={() => setModal(null)} />}
       {modal === "more" && (
         <Modal title="More" onClose={() => setModal(null)}>
           <div className="space-y-2">
+            <button type="button" className="btn-ghost w-full text-left" onClick={() => { setModal(null); navigate("/emis"); }}>EMIs</button>
             <button type="button" className="btn-ghost w-full text-left" onClick={() => open("budget")}>Budget and salary</button>
             <button type="button" className="btn-ghost w-full text-left" onClick={() => open("category")}>Categories</button>
             <button type="button" className="btn-ghost w-full text-left text-red-300" onClick={() => { setModal(null); void signOut(); }}>Sign out ({displayName})</button>
@@ -102,7 +123,7 @@ export default function App() {
   return (
     <QueryClientProvider client={qc}><AuthProvider><ConfirmProvider><BrowserRouter>
       <Routes><Route path="/login" element={<Auth />} />
-        <Route element={<Layout />}><Route index element={<Dashboard />} /><Route path="history" element={<Expenses />} /><Route path="expenses" element={<Expenses />} /><Route path="owing" element={<Owing />} /><Route path="trips" element={<Trips />} /></Route></Routes>
+        <Route element={<Layout />}><Route index element={<Dashboard />} /><Route path="history" element={<Expenses />} /><Route path="expenses" element={<Expenses />} /><Route path="owing" element={<Owing />} /><Route path="trips" element={<Trips />} /><Route path="emis" element={<Emis />} /></Route></Routes>
       <Toaster theme="dark" richColors closeButton position="top-center" toastOptions={{ style: { fontFamily: "inherit" } }} />
     </BrowserRouter></ConfirmProvider></AuthProvider></QueryClientProvider>
   );

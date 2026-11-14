@@ -31,7 +31,7 @@ const Field = ({ label, error, hint, children }: { label: string; error?: string
 
 const sameName = (a: string, b: string) => a.trim().toLocaleLowerCase() === b.trim().toLocaleLowerCase();
 
-export default function ExpenseForm({ onClose, expense }: { onClose: () => void; expense?: Expense }) {
+export default function ExpenseForm({ onClose, expense, onEmi }: { onClose: () => void; expense?: Expense; onEmi?: () => void }) {
   const { uid, categories, expenses, finance } = useData(); const qc = useQueryClient();
   const [amount, setAmount] = useState(""); const [categoryId, setCat] = useState(""); const [note, setNote] = useState(""); const [dt, setDt] = useState("");
   const [paymentMode, setPaymentMode] = useState<PaymentMode>("self");
@@ -277,6 +277,7 @@ export default function ExpenseForm({ onClose, expense }: { onClose: () => void;
           <input ref={amountRef} className="input text-lg font-semibold" type="text" inputMode="decimal" placeholder="0" value={amount} autoComplete="off"
             aria-invalid={!!show("amount")} onChange={(e) => setAmount(e.target.value)} autoFocus={!expense} />
         </Field>
+        {!expense && onEmi && <button type="button" className="-mt-2 min-h-11 text-sm font-medium text-accent" onClick={onEmi}>Buying on EMI? Set up the installments</button>}
 
         <fieldset>
           <legend className="mb-1 text-sm font-medium">Category</legend>

@@ -12,7 +12,7 @@ vi.mock("./appwrite/client", () => ({
   },
   tablesDB: {
     createRow: async ({ rowId, data }: any) => {
-      if (store.rows.has(rowId)) throw new Error("exists");
+      if (store.rows.has(rowId)) throw Object.assign(new Error("exists"), { code: 409 });
       const row = { $id: rowId, ...data }; store.rows.set(rowId, row); return row;
     },
     updateRow: async ({ rowId, data }: any) => { const row = { ...store.rows.get(rowId), ...data }; store.rows.set(rowId, row); return row; },
@@ -34,9 +34,11 @@ import { tablesDB } from "./appwrite/client";
 import { addExpense, listExpenses } from "./services/expenses";
 import { deleteCategory, findSimilarCategories, listCategories, mergeCategories, removeUnusedCategories, renameCategory, suggestedCategories, undoMerge } from "./services/categories";
 import { addExpenseToTrip, createTrip, deleteTrip, listTrips } from "./services/trips";
+import { createEmi, deleteEmi, emiDueLaterThisMonth, emiLabels, emiProgress, installmentExpenseId, listEmis, materializeDueEmis, stopEmi } from "./services/emis";
 import { addBorrowing, addLoan, deleteBorrowing, deleteLoan, friendBalances, getFinance, netPosition, recordFriendSettlement, replaceExpenseFinanceData, saveSalary } from "./services/finance";
 import { captureState, deleteTransactions, undoCreate, undoDelete, undoEdit } from "./services/transactions";
 import { summarizeMonth, summarizeTrip } from "./summary";
+import { localDate } from "./utils";
 import type { Expense } from "../types";
 
 const UID = "u1";
@@ -442,6 +444,9 @@ describe("records that belong to a transaction cannot be deleted from the Balanc
   });
 });
 
+const seedCategories = async (names: string[]) => { store.prefs.categories = JSON.stringify(names.map((name, index) => ({ $id: `c${index}`, userId: UID, name, color: `#00000${index}`, isDefault: false }))); };
+const categoryIds = async () => Object.fromEntries((await listCategories(UID)).map((c) => [c.name, c.$id]));
+
 describe("category management", () => {
   const seed = async (names: string[]) => {
     await listCategories(UID); // seeds the defaults
@@ -801,6 +806,165 @@ describe("money owed from before the app (opening balances)", () => {
     expect(oct.cashSpent).toBe(1000);
     expect(oct.mismatch).toBe(0);
     expect(oct.reconciliation.payableSettled).toBe(1000);
+  });
+});
+
+describe("EMI plans", () => {
+  const PERSONAL = "cat-personal";
+  const emiInput = (extra: Partial<import("./emiSchedule").EmiInput> = {}) => ({
+    mode: "emi" as const, price: 0, emiAmount: 1000, months: 3, annualRate: 0, downPayment: 0, fee: 0,
+    purchaseDate: "2026-11-14", firstDue: "2026-12-05", ...extra,
+  });
+  const day = (y: number, m: number, d: number) => new Date(y, m - 1, d, 9, 0);
+  const month = async (mk: string) => { const { expenses, finance, trips } = await snapshot(); return summarizeMonth(expenses, finance, trips, mk); };
+
+  it("the trimmer: 1,000 a month for 3 months shows up in each month's spending, on its due date, in the right category", async () => {
+    await createEmi({ name: "Trimmer", categoryId: PERSONAL, input: emiInput() });
+    expect((await materializeDueEmis(UID, day(2026, 11, 20))).created).toHaveLength(0);       // nothing is due yet
+    expect((await listExpenses(UID))).toHaveLength(0);
+    expect((await materializeDueEmis(UID, day(2026, 12, 10))).created).toHaveLength(1);
+    await materializeDueEmis(UID, day(2027, 1, 10));
+    await materializeDueEmis(UID, day(2027, 3, 1));
+    const rows = (await listExpenses(UID)).sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+    expect(rows.map((r) => [r.note, r.amount, r.categoryId])).toEqual([
+      ["Trimmer · EMI 1 of 3", 1000, PERSONAL], ["Trimmer · EMI 2 of 3", 1000, PERSONAL], ["Trimmer · EMI 3 of 3", 1000, PERSONAL],
+    ]);
+    expect(rows.map((r) => localDate(r.timestamp))).toEqual(["2026-12-05", "2027-01-05", "2027-02-05"]); // exact calendar days
+    for (const mk of ["2026-12", "2027-01", "2027-02"]) {
+      const m = await month(mk);
+      expect(m.cashSpent).toBe(1000);                 // it leaves the account that month
+      expect(m.byCategory[PERSONAL]).toBe(1000);      // and counts as that month's spending
+      expect(m.mismatch).toBe(0);
+    }
+    expect((await month("2026-11")).cashSpent).toBe(0);
+    expect(emiProgress((await listEmis())[0])).toMatchObject({ paidCount: 3, totalCount: 3, remaining: 0, finished: true });
+  });
+
+  it("a down payment lands on the purchase date, and payments already due when you set it up are added straight away", async () => {
+    await createEmi({ name: "Phone", categoryId: PERSONAL, input: emiInput({ downPayment: 500, fee: 99, purchaseDate: "2026-09-01", firstDue: "2026-10-05" }) });
+    const { created } = await materializeDueEmis(UID, day(2026, 11, 20));
+    expect(created.map((c) => [c.label, c.amount])).toEqual([["down payment", 599], ["EMI 1 of 3", 1000], ["EMI 2 of 3", 1000]]);
+    expect((await month("2026-09")).byCategory[PERSONAL]).toBe(599);
+    expect((await month("2026-10")).byCategory[PERSONAL]).toBe(1000);
+    expect((await month("2026-11")).byCategory[PERSONAL]).toBe(1000);
+    expect(emiProgress((await listEmis())[0])).toMatchObject({ paidCount: 2, remainingCount: 1, remaining: 1000 });
+  });
+
+  it("running it again, or many times at once, never adds a payment twice", async () => {
+    await createEmi({ name: "Trimmer", categoryId: PERSONAL, input: emiInput() });
+    const runs = await Promise.all([1, 2, 3, 4, 5].map(() => materializeDueEmis(UID, day(2027, 3, 1))));
+    await materializeDueEmis(UID, day(2027, 3, 1));
+    expect((await listExpenses(UID))).toHaveLength(3);
+    expect(new Set(runs).size).toBe(1);               // simultaneous calls share one run
+    expect(runs[0].created).toHaveLength(3);
+  });
+
+  it("a payment another tab already created is adopted, not duplicated", async () => {
+    const plan = await createEmi({ name: "Trimmer", categoryId: PERSONAL, input: emiInput() });
+    store.rows.set(installmentExpenseId(plan.id, 1), { $id: installmentExpenseId(plan.id, 1), userId: UID, amount: 1000, categoryId: PERSONAL, note: "Trimmer · EMI 1 of 3", timestamp: new Date(2026, 11, 5, 12).toISOString() });
+    const { created } = await materializeDueEmis(UID, day(2026, 12, 10));
+    expect(created).toHaveLength(0);
+    expect((await listExpenses(UID))).toHaveLength(1);
+    expect((await listEmis())[0].installments[0].expenseId).toBe(installmentExpenseId(plan.id, 1));
+  });
+
+  it("deleting a payment's transaction does not bring it back", async () => {
+    await createEmi({ name: "Trimmer", categoryId: PERSONAL, input: emiInput() });
+    await materializeDueEmis(UID, day(2026, 12, 10));
+    const [row] = await listExpenses(UID);
+    await deleteTransactions([row.$id], [row]);
+    await materializeDueEmis(UID, day(2026, 12, 11));
+    expect(await listExpenses(UID)).toHaveLength(0);
+  });
+
+  it("undoing the deletion of a payment restores it under the same id, so the plan still lines up", async () => {
+    await createEmi({ name: "Trimmer", categoryId: PERSONAL, input: emiInput() });
+    await materializeDueEmis(UID, day(2026, 12, 10));
+    const [row] = await listExpenses(UID);
+    const { undo } = await deleteTransactions([row.$id], [row]);
+    await undoDelete(UID, undo!);
+    expect((await listExpenses(UID)).map((r) => r.$id)).toEqual([row.$id]);
+    await materializeDueEmis(UID, day(2026, 12, 11));
+    expect(await listExpenses(UID)).toHaveLength(1);
+  });
+
+  it("stopping the plan keeps what was already added and cancels the rest", async () => {
+    await createEmi({ name: "Trimmer", categoryId: PERSONAL, input: emiInput() });
+    await materializeDueEmis(UID, day(2026, 12, 10));
+    await stopEmi((await listEmis())[0].id, day(2026, 12, 10));
+    await materializeDueEmis(UID, day(2027, 6, 1));
+    expect(await listExpenses(UID)).toHaveLength(1);
+    expect(emiProgress((await listEmis())[0])).toMatchObject({ paidCount: 1, totalCount: 1, remaining: 0, finished: true });
+  });
+
+  it("one failing payment does not block the others, and is retried next time", async () => {
+    const plan = await createEmi({ name: "Trimmer", categoryId: PERSONAL, input: emiInput() });
+    const original = tablesDB.createRow;
+    (tablesDB as any).createRow = async (args: any) => { if (args.rowId === installmentExpenseId(plan.id, 2)) throw new Error("network"); return original(args); };
+    try {
+      const first = await materializeDueEmis(UID, day(2027, 3, 1));
+      expect(first).toMatchObject({ failed: 1 });
+      expect(first.created).toHaveLength(2);
+    } finally { (tablesDB as any).createRow = original; }
+    const second = await materializeDueEmis(UID, day(2027, 3, 1));
+    expect(second.created).toHaveLength(1);
+    expect(await listExpenses(UID)).toHaveLength(3);
+  });
+
+  it("deleting a plan can keep or remove the payments already added", async () => {
+    await createEmi({ name: "A", categoryId: PERSONAL, input: emiInput() });
+    await createEmi({ name: "B", categoryId: PERSONAL, input: emiInput({ emiAmount: 200 }) });
+    await materializeDueEmis(UID, day(2026, 12, 10));
+    const [a, b] = await listEmis();
+    await deleteEmi(a.id, await listExpenses(UID), false);
+    expect((await listExpenses(UID))).toHaveLength(2);                 // kept
+    expect(await listEmis()).toHaveLength(1);
+    await deleteEmi(b.id, await listExpenses(UID), true);
+    expect(await listExpenses(UID)).toHaveLength(1);                   // only A's payment is left
+    await materializeDueEmis(UID, day(2027, 3, 1));
+    expect(await listExpenses(UID)).toHaveLength(1);                   // a deleted plan adds nothing more
+  });
+
+  it("shows what is still due later this month, so the daily limit can plan for it", async () => {
+    await createEmi({ name: "Trimmer", categoryId: PERSONAL, input: emiInput({ firstDue: "2026-12-20" }) });
+    await createEmi({ name: "Phone", categoryId: PERSONAL, input: emiInput({ emiAmount: 700, firstDue: "2026-12-12" }) });
+    const plans = await listEmis();
+    expect(emiDueLaterThisMonth(plans, day(2026, 12, 10))).toEqual({ total: 1700, count: 2 });
+    expect(emiDueLaterThisMonth(plans, day(2026, 12, 15))).toEqual({ total: 1000, count: 1 });
+    expect(emiDueLaterThisMonth(plans, day(2026, 12, 25))).toEqual({ total: 0, count: 0 });
+  });
+
+  it("labels each created transaction for the transactions list", async () => {
+    await createEmi({ name: "Phone", categoryId: PERSONAL, input: emiInput({ downPayment: 500 }) });
+    await materializeDueEmis(UID, day(2027, 1, 10));
+    const labels = emiLabels(await listEmis());
+    expect([...labels.values()].sort()).toEqual(["EMI 1 of 3", "EMI 2 of 3", "EMI down payment"]);
+  });
+
+  it("the category follows a merge, and a category an EMI still uses cannot be deleted", async () => {
+    await seedCategories(["Personal", "Other"]);
+    const c = await categoryIds();
+    await createEmi({ name: "Trimmer", categoryId: c.Personal, input: emiInput() });
+    await expect(deleteCategory(UID, c.Personal)).rejects.toThrow(/EMI plan/i);
+    expect((await removeUnusedCategories(UID)).removed.map((x) => x.name)).not.toContain("Personal");
+    const { undo } = await mergeCategories(UID, [c.Personal], c.Other);
+    expect((await listEmis())[0].categoryId).toBe(c.Other);
+    await materializeDueEmis(UID, day(2026, 12, 10));
+    expect((await listExpenses(UID))[0].categoryId).toBe(c.Other);       // new payments use the merged category
+    await undoMerge(undo);
+    expect((await listEmis())[0].categoryId).toBe(c.Personal);
+  });
+
+  it("EMIs mixed with every other kind of transaction still reconcile", async () => {
+    await createEmi({ name: "Trimmer", categoryId: PERSONAL, input: emiInput({ firstDue: "2026-12-01", downPayment: 250 }) });
+    await addTx(900, FOOD, { kind: "paid_for_friend", shares: { Asha: 400 } });
+    await addTx(300, FOOD, { kind: "friend_paid", friend: "Ravi" });
+    await addLoan({ friend: "Neel", amount: 150, note: "", timestamp: stamp() });
+    await materializeDueEmis(UID, new Date(2027, 2, 1));
+    const { expenses, finance, trips } = await snapshot();
+    const now = new Date();
+    const keys = ["2026-11", "2026-12", "2027-01", "2027-02", `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`];
+    for (const key of keys) expect(summarizeMonth(expenses, finance, trips, key).mismatch).toBe(0);
   });
 });
 

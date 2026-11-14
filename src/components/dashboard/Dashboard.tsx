@@ -7,6 +7,7 @@ import { money, monthKey, suggestedDailyLimit, pace, barColor } from "../../lib/
 import { accountCashFlow, categorySpend, friendBalances } from "../../lib/services/finance";
 import { isSystemCategory } from "../../lib/services/categories";
 import { standaloneCashFlow, summarizeMonth } from "../../lib/summary";
+import { emiDueLaterThisMonth } from "../../lib/services/emis";
 
 const Card = ({ title, children, className = "" }: { title: string; children: React.ReactNode; className?: string }) => (
   <section className={`min-w-0 overflow-hidden rounded-xl border border-line bg-panel p-4 ${className}`}>
@@ -16,7 +17,7 @@ const Card = ({ title, children, className = "" }: { title: string; children: Re
 const tip = { contentStyle: { background: "#151c2c", color: "#edf2ff", border: "1px solid #29334a", borderRadius: 8 }, itemStyle: { color: "#edf2ff" }, labelStyle: { color: "#edf2ff" } };
 
 export default function Dashboard({ month }: { month?: Date }) {
-  const { categories, expenses, budget, finance, trips, loading } = useData(month);
+  const { categories, expenses, budget, finance, trips, emis, loading } = useData(month);
   const dayKey = new Date().toDateString();
   // Stable between renders (so the numbers below are only recomputed when something changes), but still rolls over at midnight.
   const now = useMemo(() => month ?? new Date(), [month, dayKey]);
@@ -59,9 +60,11 @@ export default function Dashboard({ month }: { month?: Date }) {
   // Salary remaining follows your bank balance, so it uses what actually left the account.
   const salaryRemaining = finance.salary - d.actual - savings;
   // The daily limit respects both your budget and the money actually left in your account, whichever is lower.
+  // EMI payments still due later this month will leave the account and count as spending, so the limit sets them aside first.
+  const emiLater = isPastMonth ? { total: 0, count: 0 } : emiDueLaterThisMonth(emis, now);
   const limit = isPastMonth ? null : suggestedDailyLimit({
-    budgetLeft: total > 0 ? total - d.effective : null,
-    accountLeft: finance.salary > 0 ? salaryRemaining : null,
+    budgetLeft: total > 0 ? total - d.effective - emiLater.total : null,
+    accountLeft: finance.salary > 0 ? salaryRemaining - emiLater.total : null,
   }, now);
   const shares = d.rows.filter((r) => r.spent > 0).sort((a, b) => b.spent - a.spent);
   const rec = d.reconciliation;
@@ -137,7 +140,7 @@ export default function Dashboard({ month }: { month?: Date }) {
           <p className="text-xl font-bold">{isPastMonth ? money(d.effective / daysInMonth) : limit ? money(limit.perDay) : "Not set"}</p>
           <p className={`text-xs leading-relaxed ${limit && d.todayEffective > limit.perDay ? "text-red-300" : "text-mute"}`}>
             {isPastMonth ? `${daysInMonth} days in month` : limit
-              ? `Today: ${money(d.todayEffective)} · ${limit.limitedBy === "account" ? "limited by what's left in your account" : "based on your budget"}`
+              ? `Today: ${money(d.todayEffective)} · ${limit.limitedBy === "account" ? "limited by what's left in your account" : "based on your budget"}${emiLater.count ? ` · after ${money(emiLater.total)} of EMIs due` : ""}`
               : "Set a budget or salary to see this"}</p></Card>
         <Card title="Planned savings"><p className="text-xl font-bold text-emerald-400">{money(savings)}</p>
           <p className="text-xs text-mute">{finance.salary

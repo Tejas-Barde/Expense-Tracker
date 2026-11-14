@@ -5,6 +5,7 @@ import { listExpenses } from "./services/expenses";
 import { getBudget } from "./services/budgets";
 import { getFinance } from "./services/finance";
 import { listTrips } from "./services/trips";
+import { listEmis } from "./services/emis";
 import { monthKey } from "./utils";
 export function useData(month?: Date) {
   const uid = useAuth().user!.$id, mk = monthKey(month);
@@ -13,7 +14,8 @@ export function useData(month?: Date) {
   const b = useQuery({ queryKey: ["budget", mk], queryFn: () => getBudget(uid, mk) });
   const f = useQuery({ queryKey: ["finance", uid], queryFn: getFinance });
   const t = useQuery({ queryKey: ["trips", uid], queryFn: () => listTrips(uid) });
+  const em = useQuery({ queryKey: ["emis", uid], queryFn: listEmis });
   return { uid, mk, categories: c.data ?? [], expenses: e.data ?? [], budget: b.data ?? null,
     finance: f.data ?? { salary: 0, loans: [], friendPaidExpenses: [], borrowings: [], settlements: [] },
-    trips: t.data ?? [], loading: c.isLoading || e.isLoading || b.isLoading || f.isLoading || t.isLoading };
+    trips: t.data ?? [], emis: em.data ?? [], loading: c.isLoading || e.isLoading || b.isLoading || f.isLoading || t.isLoading || em.isLoading };
 }

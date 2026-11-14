@@ -57,3 +57,29 @@ export interface Settlement {
   timestamp: string;
   allocations: { targetId: string; amount: number }[];
 }
+
+/** One monthly payment of an EMI plan. It becomes a normal transaction on its due date. */
+export interface EmiInstallment {
+  n: number;
+  /** yyyy-mm-dd */
+  due: string;
+  amount: number;
+  /** Set once the transaction exists. A deleted transaction is never re-created. */
+  expenseId?: string;
+  /** Stopped before it was due. */
+  cancelled?: boolean;
+}
+export interface EmiPlan {
+  id: string;
+  name: string;
+  categoryId: string;
+  createdAt: string;
+  /** Product price, kept for display when known. */
+  price?: number;
+  annualRate?: number;
+  /** Down payment plus one-time fees, paid on the purchase date. */
+  upfront?: { date: string; amount: number; expenseId?: string; cancelled?: boolean };
+  installments: EmiInstallment[];
+  /** True once the remaining payments were stopped. */
+  stopped?: boolean;
+}
